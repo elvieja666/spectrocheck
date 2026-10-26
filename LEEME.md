@@ -61,14 +61,24 @@ Cuando dice **✅ Listo**, abrí Logic. Lo encontrás en **Audio Units > 0600mus
 
 | Corte | Típico de |
 |---|---|
-| ~16 kHz | MP3 128 kbps |
+| ~16 kHz | MP3 96–128 kbps |
 | ~17.5 kHz | MP3 160 kbps |
 | ~19 kHz | MP3 192 kbps |
 | ~19.5–20 kHz | MP3 256 kbps, AAC, Ogg alta calidad |
 | ~20–20.5 kHz | MP3 320 kbps |
 | hasta 22 kHz (a 44.1) o 24 kHz (a 48) | WAV/FLAC sin pérdida |
 
-Cada codificador corta en un lugar un poco distinto, así que tomalo como guía. Un caso especial: si el proyecto está a 88.2 o 96 kHz y el audio corta en ~22 kHz, es un archivo de "alta resolución" hecho desde uno de 44.1/48 kHz.
+Cada codificador corta en un lugar un poco distinto, así que tomalo como guía. El de Logic, en 192 kbps o más, casi no corta: para esos está el detector de huecos. Un caso especial: si el proyecto está a 88.2 o 96 kHz y el audio corta en ~22 kHz, es un archivo de "alta resolución" hecho desde uno de 44.1/48 kHz.
+
+### Huecos en los agudos (MP3 de alta calidad sin corte)
+
+Algunos codificadores, como el exportador de MP3 de Logic, casi no cortan los agudos en 192, 256 o 320 kbps, así que el corte solo no alcanza para descubrirlos. Pero el codificador **borra los agudos de a ratos** (en pedacitos de ~12 ms) cuando no le alcanzan los bits, sobre todo en el estéreo (canal lateral). Un WAV original nunca hace eso: sus agudos son continuos.
+
+- La franja **HUECOS**, arriba del espectrograma, se pinta de **naranja** en cada momento en que los agudos se apagan de golpe. En un WAV original queda gris.
+- Abajo a la derecha dice qué porcentaje del tiempo se apagaron, en el estéreo y en el centro.
+- Desde un 6% el veredicto pasa a *"Huecos en los agudos: probable MP3/AAC"*. Entre 1.5% y 6% avisa *"algunos huecos"*.
+- Con un master 24/48 y sus versiones MP3 de Logic dio: WAV original 0.2%, MP3 320 32%, MP3 256 52% (igual que el "falso WAV" hecho desde el 256), MP3 192 82%.
+- En un tema mono el estéreo no se puede medir y solo se usa el centro, así que no da falsos positivos.
 
 ### Líneas fijas
 

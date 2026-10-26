@@ -162,6 +162,8 @@ void SpectroCheckEditor::timerCallback()
         const int n = proc.fifo.pop (bufL.data(), bufR.data(), (int) bufL.size());
         if (n <= 0 || frozen) { if (n <= 0) break; continue; }
 
+        detector.pushStereo (bufL.data(), bufR.data(), n);   // huecos: siempre con L y R
+
         for (int i = 0; i < n; ++i)
         {
             const float l = bufL[(size_t) i], r = bufR[(size_t) i];
@@ -176,7 +178,7 @@ void SpectroCheckEditor::timerCallback()
 
         analyzer.push (mono.data(), n, [this] (const float* db, int bins, float rms)
         {
-            view.addColumn (db, bins);
+            view.addColumn (db, bins, detector.takeHoleStripValue());
             detector.addFrame (db, bins, rms, analyzer.frameSeconds());
         });
     }
@@ -223,7 +225,6 @@ void SpectroCheckEditor::paint (juce::Graphics& g)
 
     auto info = bottom.reduced (18, 0);
     info.removeFromRight (resetButton.getWidth() + 12);
-    auto linesRow = info.withHeight (18).withY (bottom.getY() + 56);   // tercera fila, todo el ancho
     const int y0 = bottom.getY();
 
     // datos de la medición a la derecha
@@ -234,13 +235,24 @@ void SpectroCheckEditor::paint (juce::Graphics& g)
     if (verdict.kind != sc::CutoffResult::Kind::waiting && verdict.dropDb > 0.5f)
         measured << "  " << T ("·") << T ("  caída ") << juce::String (juce::roundToInt (verdict.dropDb)) << " dB";
 
-    auto statsArea = info.removeFromRight (240);
+    auto statsArea = info.removeFromRight (270);
+    auto linesRow = info.withHeight (18).withY (y0 + 56);   // tercera fila de la izquierda
     g.setFont (Theme::font (12.0f));
     g.setColour (Theme::dim);
     g.drawText (measured, statsArea.withHeight (18).withY (y0 + 13), juce::Justification::centredRight);
+
+    if (verdict.holesText.isNotEmpty())
+    {
+        const float score = juce::jmax (verdict.holesMid, verdict.holesSide);
+        g.setColour (verdict.holesMeasured && score >= sc::CutoffDetector::holesStrongPct ? Theme::codec
+                     : verdict.holesMeasured && score >= sc::CutoffDetector::holesSomePct ? Theme::text : Theme::dim);
+        g.setFont (Theme::font (12.0f, 500));
+        g.drawFittedText (verdict.holesText, statsArea.withHeight (18).withY (y0 + 35), juce::Justification::centredRight, 1, 0.85f);
+    }
+
     g.setColour (Theme::faint);
     g.setFont (Theme::font (11.5f));
-    g.drawText (stats, statsArea.withHeight (16).withY (y0 + 35), juce::Justification::centredRight);
+    g.drawText (stats, statsArea.withHeight (16).withY (y0 + 57), juce::Justification::centredRight);
 
     // veredicto
     const auto c = AnalyzerView::colourFor (verdict.kind);

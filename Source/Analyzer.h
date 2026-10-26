@@ -137,6 +137,12 @@ namespace sc
         float seconds = 0.0f;     // segundos con señal medidos
         juce::String title, detail;
 
+        // Huecos en los agudos: % de celdas de 16-20 kHz que se apagan por completo mientras
+        // 8-14 kHz sigue sonando. -1 = no se pudo medir (por ejemplo, lateral de un tema mono).
+        bool  holesMeasured = false;
+        float holesMid = -1.0f, holesSide = -1.0f;
+        juce::String holesText;
+
         bool linesReady = false;        // ya pasó el tiempo mínimo para buscar líneas
         std::vector<ToneLine> lines;    // las más marcadas primero
         juce::String linesText;         // resumen para mostrar abajo
@@ -164,6 +170,19 @@ namespace sc
         static constexpr double lineMinSeconds = 5.0;
         static constexpr int    maxLines = 4;
 
+        // Huecos en los agudos. Un MP3/AAC de alta calidad puede no tener corte, pero el
+        // codificador borra los agudos de a ratos (cuadros de ~12 ms), sobre todo en el
+        // canal lateral (S). Un WAV real casi nunca apaga los agudos mientras los medios suenan.
+        static constexpr int    holeFftOrder = 10;        // 1024 muestras: ventana corta, ve cada cuadro
+        static constexpr float  holeDepthDb = 55.0f;      // "apagado" = 55 dB debajo de 8-14 kHz
+        static constexpr double holeLoHz = 16000.0, holeHiHz = 20000.0;
+        static constexpr double holeRefLoHz = 8000.0, holeRefHiHz = 14000.0;
+        static constexpr double holeMinEdgeHz = 17500.0;  // debajo de esto ya lo resuelve el corte
+        // Medido con un master 24/48 y sus versiones MP3 de Logic: el WAV nunca pasó de 0.3%
+        // en ningún tramo de 10 s; el MP3 de 320 dio 32% en el tema entero (4% en su peor tramo).
+        static constexpr float  holesStrongPct = 6.0f;    // desde acá: probable MP3/AAC
+        static constexpr float  holesSomePct = 1.5f;      // desde acá: "algunos huecos"
+
         void reset (int bins, double newBinHz, double newSampleRate)
         {
             numBins = bins;
@@ -178,6 +197,7 @@ namespace sc
             smooth.assign ((size_t) bins, minDb);
             lineCount.assign ((size_t) bins, 0u);
             framePow.assign ((size_t) bins + 1, 0.0);
+            resetHoles();
             frames = 0;
             seconds = 0.0;
             silentSeconds = 0.0;
@@ -208,6 +228,34 @@ namespace sc
             countLinePeaks (db, n);
             ++frames;
             seconds += frameSeconds;
+        }
+
+        // Audio estéreo para el detector de huecos (independiente del canal elegido en pantalla).
+        void pushStereo (const float* l, const float* r, int n)
+        {
+            if (holeFft == nullptr) return;
+            const int size = 1 << holeFftOrder, mask = size - 1;
+            for (int i = 0; i < n; ++i)
+            {
+                holeRingM[(size_t) holePos] = 0.5f * (l[i] + r[i]);
+                holeRingS[(size_t) holePos] = 0.5f * (l[i] - r[i]);
+                holePos = (holePos + 1) & mask;
+                if (holeFilled < size) ++holeFilled;
+                if (++holeSince >= size / 2 && holeFilled == size)
+                {
+                    holeSince = 0;
+                    holeFrame();
+                }
+            }
+        }
+
+        // Cuánto de los agudos se apagó desde la última vez que se preguntó (0..1), o -1 si
+        // no hubo cuadros medibles. Lo usa la franja de huecos del gráfico.
+        float takeHoleStripValue()
+        {
+            const float v = stripValue;
+            stripValue = -1.0f;
+            return v;
         }
 
         double getSeconds() const { return seconds; }
@@ -329,6 +377,7 @@ namespace sc
                 r.detail = txt ("Caída suave: parece la grabación o la mezcla, no un códec. Probá en una parte con más brillo.");
             }
 
+            applyHoles (r, reachesTop ? nyq : edgeHz);
             describeLines (r, reachesTop ? nyq : edgeHz);
             return r;
         }
@@ -337,7 +386,7 @@ namespace sc
         {
             if (hz < 11500.0) return "Calidad muy baja (64 kbps o menos)";
             if (hz < 15500.0) return txt ("Típico de MP3/AAC de 96 kbps o menos");
-            if (hz < 17300.0) return txt ("Típico de MP3 de 128 kbps");
+            if (hz < 17300.0) return txt ("Típico de MP3 de 96 a 128 kbps");
             if (hz < 18300.0) return txt ("Típico de MP3 de 160 kbps");
             if (hz < 19300.0) return txt ("Típico de MP3 de 192 kbps");
             if (hz < 20200.0) return txt ("Típico de MP3 de 256 kbps, AAC u Ogg de alta calidad");
@@ -345,6 +394,155 @@ namespace sc
         }
 
     private:
+        //======================================================================
+        //  Huecos en los agudos
+        //======================================================================
+        void resetHoles()
+        {
+            const int size = 1 << holeFftOrder;
+            holeBinHz = sampleRate / size;
+            holeB0 = (int) std::round (holeLoHz / holeBinHz);
+            holeB1 = juce::jmin (size / 2, (int) std::round (juce::jmin (holeHiHz, sampleRate * 0.5 - 500.0) / holeBinHz));
+            refB0 = (int) std::round (holeRefLoHz / holeBinHz);
+            refB1 = (int) std::round (holeRefHiHz / holeBinHz);
+
+            if (holeB1 - holeB0 < 4)   // frecuencia de muestreo muy baja: no hay agudos que mirar
+            {
+                holeFft.reset();
+                return;
+            }
+            if (holeFft == nullptr)
+                holeFft = std::make_unique<juce::dsp::FFT> (holeFftOrder);
+
+            holeWindow.assign ((size_t) size, 0.0f);
+            juce::dsp::WindowingFunction<float>::fillWindowingTables (holeWindow.data(), (size_t) size,
+                juce::dsp::WindowingFunction<float>::blackmanHarris, false);
+            double windowSum = 0.0;
+            for (auto w : holeWindow) windowSum += w;
+            holeAmpScale = (float) (2.0 / windowSum);
+
+            holeRingM.assign ((size_t) size, 0.0f);
+            holeRingS.assign ((size_t) size, 0.0f);
+            holeWorkM.assign ((size_t) size * 2, 0.0f);
+            holeWorkS.assign ((size_t) size * 2, 0.0f);
+            const auto bandBins = (size_t) (holeB1 - holeB0 + 1);
+            deadM.assign (bandBins, 0u);
+            deadS.assign (bandBins, 0u);
+            holeOkM = holeOkS = 0;
+            holePos = holeFilled = holeSince = 0;
+            stripTopBin = holeB1;
+            stripValue = -1.0f;
+        }
+
+        void holeSpectrum (const std::vector<float>& ring, std::vector<float>& work)
+        {
+            const int size = 1 << holeFftOrder, mask = size - 1;
+            for (int i = 0; i < size; ++i)
+                work[(size_t) i] = ring[(size_t) ((holePos + i) & mask)] * holeWindow[(size_t) i];
+            std::fill (work.begin() + size, work.end(), 0.0f);
+            holeFft->performFrequencyOnlyForwardTransform (work.data(), true);
+            for (int b = 0; b <= size / 2; ++b)
+            {
+                const double a = (double) work[(size_t) b] * holeAmpScale;
+                work[(size_t) b] = powerToDb (a * a);
+            }
+        }
+
+        float bandDb (const std::vector<float>& db, int b0, int b1) const
+        {
+            double p = 0.0;
+            for (int b = b0; b <= b1; ++b) p += dbToPower (db[(size_t) b]);
+            return powerToDb (p / (b1 - b0 + 1));
+        }
+
+        void holeFrame()
+        {
+            holeSpectrum (holeRingM, holeWorkM);
+            holeSpectrum (holeRingS, holeWorkS);
+
+            const float mRef = bandDb (holeWorkM, refB0, refB1);
+            const float sRef = bandDb (holeWorkS, refB0, refB1);
+            const bool okM = mRef > -70.0f;
+            const bool okS = okM && sRef > mRef - 25.0f && sRef > -90.0f;   // el lateral tiene contenido
+
+            int stripDead = 0, stripCount = 0;
+            if (okM)
+            {
+                ++holeOkM;
+                const float thr = mRef - holeDepthDb;
+                for (int b = holeB0; b <= holeB1; ++b)
+                    if (holeWorkM[(size_t) b] < thr)
+                    {
+                        ++deadM[(size_t) (b - holeB0)];
+                        if (! okS && b <= stripTopBin) ++stripDead;
+                    }
+                if (! okS) stripCount = stripTopBin - holeB0 + 1;
+            }
+            if (okS)
+            {
+                ++holeOkS;
+                const float thr = sRef - holeDepthDb;
+                for (int b = holeB0; b <= holeB1; ++b)
+                    if (holeWorkS[(size_t) b] < thr)
+                    {
+                        ++deadS[(size_t) (b - holeB0)];
+                        if (b <= stripTopBin) ++stripDead;
+                    }
+                stripCount = stripTopBin - holeB0 + 1;
+            }
+            if (stripCount > 0)
+                stripValue = juce::jmax (stripValue, (float) stripDead / (float) stripCount);
+        }
+
+        void applyHoles (CutoffResult& r, double contentTopHz)
+        {
+            // Mirar solo donde hay música: de 16 kHz hasta 1.5 kHz antes del final del contenido.
+            const double topHz = juce::jmin (holeHiHz, contentTopHz - 1500.0);
+            const int b1 = juce::jmin (holeB1, (int) std::floor (topHz / holeBinHz));
+            stripTopBin = juce::jmax (holeB0, b1);
+
+            if (holeFft == nullptr || contentTopHz < holeMinEdgeHz || b1 - holeB0 < 2 || holeOkM < 100)
+            {
+                r.holesText = contentTopHz < holeMinEdgeHz ? txt ("Huecos en agudos: no aplica (no llega a los agudos)")
+                                                           : txt ("Huecos en agudos: midiendo...");
+                return;
+            }
+
+            auto pct = [&] (const std::vector<juce::uint32>& dead, long ok)
+            {
+                double d = 0.0;
+                for (int b = holeB0; b <= b1; ++b) d += dead[(size_t) (b - holeB0)];
+                return (float) (100.0 * d / ((double) ok * (b1 - holeB0 + 1)));
+            };
+
+            r.holesMeasured = true;
+            r.holesMid  = pct (deadM, holeOkM);
+            r.holesSide = holeOkS >= 100 ? pct (deadS, holeOkS) : -1.0f;
+            const float score = juce::jmax (r.holesMid, r.holesSide);
+
+            const auto p = [] (float v) { return juce::String (v < 10.0f ? juce::String (v, 1) : juce::String (juce::roundToInt (v))) + "%"; };
+            r.holesText = txt ("Huecos en agudos: ") + (r.holesSide >= 0.0f ? p (r.holesSide) + txt (" estéreo · ") : juce::String())
+                          + p (r.holesMid) + txt (" centro");
+
+            if (score >= holesStrongPct)
+            {
+                const bool wasCodec = r.kind == CutoffResult::Kind::codec || r.kind == CutoffResult::Kind::resampled;
+                if (! wasCodec)
+                {
+                    r.kind  = CutoffResult::Kind::codec;
+                    r.title = txt ("Huecos en los agudos: probable MP3/AAC");
+                    r.detail = txt ("Llega hasta ") + juce::String (contentTopHz / 1000.0, 1)
+                               + txt (" kHz, pero los agudos se apagan de a ratos (")
+                               + p (score) + txt (" del tiempo). Un WAV original no hace eso.");
+                }
+            }
+            else if (score >= holesSomePct && r.kind != CutoffResult::Kind::codec && r.kind != CutoffResult::Kind::resampled)
+            {
+                r.detail = txt ("Algunos huecos en los agudos (") + p (score)
+                           + txt ("): podría ser un MP3/AAC de muy alta calidad. Revisá en Lateral (S).");
+            }
+        }
+
         // Ancho (en bins) del lóbulo principal de un tono con ventana Blackman-Harris.
         static constexpr int lobeBins = 4;
 
@@ -514,6 +712,16 @@ namespace sc
         std::vector<juce::uint32> hist, lineCount;
         std::vector<double> framePow;
         std::vector<float> peak, mean, meanSmooth, level, smooth;
+
+        // huecos
+        std::unique_ptr<juce::dsp::FFT> holeFft;
+        std::vector<float> holeWindow, holeRingM, holeRingS, holeWorkM, holeWorkS;
+        std::vector<juce::uint32> deadM, deadS;
+        long holeOkM = 0, holeOkS = 0;
+        int holePos = 0, holeFilled = 0, holeSince = 0;
+        int holeB0 = 0, holeB1 = 0, refB0 = 0, refB1 = 0, stripTopBin = 0;
+        double holeBinHz = 1.0;
+        float holeAmpScale = 1.0f, stripValue = -1.0f;
         long frames = 0;
         double seconds = 0.0, silentSeconds = 0.0;
     };

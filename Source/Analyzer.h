@@ -250,12 +250,14 @@ namespace sc
 
             // Primero las líneas fijas, y se tapan para que un tono suelto (por ejemplo un
             // "relleno" en 19 kHz sobre un MP3 que corta en 16) no engañe al medir el corte.
+            // Se buscan siempre (para taparlas desde el primer segundo), pero recién se
+            // informan cuando hay tiempo suficiente para afirmar que son "fijas".
             r.linesReady = seconds >= lineMinSeconds;
-            if (r.linesReady)
             {
-                r.lines = findLines();
-                for (const auto& line : r.lines)
+                auto lines = findLines();
+                for (const auto& line : lines)
                     maskLine (level, line.hz);
+                if (r.linesReady) r.lines = std::move (lines);
             }
 
             const int k = juce::jmax (1, (int) std::round (100.0 / binHz));
@@ -398,8 +400,13 @@ namespace sc
                 const float prominence = mean[(size_t) b] - neighbourDb (cum, b);
                 if (prominence < lineMinProminenceDb) continue;
 
+                // Afinar la frecuencia entre bins con una parábola sobre los tres puntos del pico.
+                const float ya = mean[(size_t) b - 1], yb = mean[(size_t) b], yc = mean[(size_t) b + 1];
+                const float denom = ya - 2.0f * yb + yc;
+                const float offset = std::abs (denom) > 1.0e-6f ? juce::jlimit (-0.5f, 0.5f, 0.5f * (ya - yc) / denom) : 0.0f;
+
                 ToneLine line;
-                line.hz = (float) (b * binHz);
+                line.hz = (float) ((b + offset) * binHz);
                 line.share = juce::jmin (1.0f, (float) c / (float) frames);
                 line.prominenceDb = prominence;
                 line.levelDb = mean[(size_t) b];

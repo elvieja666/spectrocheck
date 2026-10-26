@@ -228,13 +228,14 @@ int main()
         auto hum = darkNoise (44100, 2000, 8);
         addTone (hum, 44100, 50, 0.2);                  // zumbido de línea eléctrica
         auto c = measure (hum, 44100, 13);
-        const auto* l50 = lineNear (c, 50, 8);
+        const auto* l50 = lineNear (c, 50, 1.5);
         checkLines ("Zumbido de 50 Hz", c, l50 != nullptr && ! l50->aboveCutoff);
 
         auto shortOne = noiseUpTo (44100, 16000, 3, 42);
         addTone (shortOne, 44100, 19000, 0.0005);
         auto d = measure (shortOne, 44100, 13);
-        checkLines ("Menos de 5 s: todavía no informa", d, ! d.linesReady && d.lines.empty());
+        checkLines ("Menos de 5 s: todavía no informa", d,
+                    ! d.linesReady && d.lines.empty() && d.kind == Kind::codec && d.edgeHz < 16400);
     }
 
     std::printf ("\n%s\n", failures == 0 ? "Todas las pruebas OK" : "HAY PRUEBAS QUE FALLARON");

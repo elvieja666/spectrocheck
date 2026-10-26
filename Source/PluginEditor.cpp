@@ -208,6 +208,9 @@ void SpectroCheckEditor::paint (juce::Graphics& g)
     g.setFont (Theme::font (17.0f, 600, -0.01f));
     g.drawText ("SpectroCheck", 18, 12, 160, 20, juce::Justification::centredLeft);
     g.setColour (Theme::faint);
+    g.setFont (Theme::font (11.0f, 500));
+    g.drawText (juce::String ("v") + JucePlugin_VersionString, 136, 15, 60, 16, juce::Justification::centredLeft);
+    g.setColour (Theme::faint);
     g.setFont (Theme::font (11.0f));
     g.drawText (T ("¿Hasta dónde llega el audio?"), 18, 32, 190, 14, juce::Justification::centredLeft);
 

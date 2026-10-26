@@ -27,7 +27,8 @@ private:
 
     juce::ComboBox scaleBox, fftBox, speedBox, rangeBox, channelBox;
     juce::Label scaleLabel, fftLabel, speedLabel, rangeLabel, channelLabel;
-    juce::TextButton guidesButton { juce::String::fromUTF8 ("Guías") }, freezeButton { "Congelar" }, resetButton { "Reiniciar" };
+    juce::TextButton guidesButton { juce::String::fromUTF8 ("Guías") }, profileButton { "Promedio" },
+                     freezeButton { "Congelar" }, resetButton { "Reiniciar" };
     AnalyzerView view;
 
     sc::SpectrumAnalyzer analyzer;

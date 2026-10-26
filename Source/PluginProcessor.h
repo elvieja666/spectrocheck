@@ -52,6 +52,7 @@ namespace Settings
     inline const juce::Identifier range   { "range" };    // 0 -100, 1 -120, 2 -140 dB
     inline const juce::Identifier channel { "channel" };  // 0 L+R, 1 Izq, 2 Der, 3 Lateral
     inline const juce::Identifier guides  { "guides" };   // líneas en 16/19/20/22 kHz
+    inline const juce::Identifier profile { "profile" };  // panel de promedio a la derecha
     inline const juce::Identifier width   { "width" };
     inline const juce::Identifier height  { "height" };
 }

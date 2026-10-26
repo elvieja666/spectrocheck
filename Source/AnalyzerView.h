@@ -79,12 +79,21 @@ public:
     void setColumnSeconds (double s) { columnSeconds = s; repaint(); }
     void setFloorDb (float f)        { floorDb = f; clearHistory(); }
     void setGuides (bool on)         { showGuides = on; repaint(); }
+
+    // Mostrar u ocultar el panel de promedio; oculto, el espectrograma usa todo el ancho.
+    void setShowProfile (bool on)
+    {
+        if (showProfile == on) return;
+        showProfile = on;
+        resized();
+        repaint();
+    }
     void setDetector (const sc::CutoffDetector* d) { detector = d; }
 
     void setResult (const sc::CutoffResult& r)
     {
         result = r;
-        repaint (profileArea.getUnion (spectroArea).expanded (2));
+        repaint (showProfile ? profileArea.getUnion (spectroArea).expanded (2) : spectroArea.expanded (2));
     }
 
     void clearHistory()
@@ -136,10 +145,15 @@ public:
     {
         auto r = getLocalBounds();
         axisArea = r.removeFromLeft (52);
-        profileArea = r.removeFromRight (juce::jlimit (110, 170, getWidth() / 7));
-        r.removeFromRight (8);
+        if (showProfile)
+        {
+            profileArea = r.removeFromRight (juce::jlimit (110, 170, getWidth() / 7));
+            r.removeFromRight (8);
+            profileArea.removeFromBottom (18);
+        }
+        else
+            profileArea = {};
         timeArea = r.removeFromBottom (18);
-        profileArea.removeFromBottom (18);
         axisArea.removeFromBottom (18);
         spectroArea = r;
         rebuildRows();
@@ -151,7 +165,7 @@ public:
         g.fillAll (Theme::bg);
         paintSpectrogram (g);
         paintAxis (g);
-        paintProfile (g);
+        if (showProfile) paintProfile (g);
         paintHover (g);
     }
 
@@ -266,8 +280,9 @@ private:
             }
         }
 
-        // borde detectado
+        // borde detectado y líneas fijas
         paintEdgeLine (g, a);
+        paintToneLines (g, a, true);
 
         // tiempo
         g.setColour (Theme::faint);
@@ -290,6 +305,47 @@ private:
         const float y = freqToY (result.edgeHz);
         g.setColour (c.withAlpha (0.9f));
         g.drawHorizontalLine (juce::roundToInt (y), (float) a.getX(), (float) a.getRight());
+    }
+
+    // Líneas fijas: una línea fina sobre el espectrograma con su frecuencia a la
+    // izquierda, y en el perfil un punto en el nivel de la línea.
+    void paintToneLines (juce::Graphics& g, juce::Rectangle<int> a, bool onSpectrogram)
+    {
+        for (const auto& line : result.lines)
+        {
+            if (line.hz <= axis.lo() || line.hz >= axis.hi()) continue;
+            const auto c = line.aboveCutoff ? Theme::codec : Theme::tone;
+            const float y = freqToY (line.hz);
+
+            if (onSpectrogram)
+            {
+                const float dots[] = { 2.0f, 3.0f };
+                g.setColour (c.withAlpha (0.7f));
+                g.drawDashedLine ({ (float) a.getX() + 58.0f, y, (float) a.getRight(), y }, dots, 2, 1.0f);
+
+                juce::Path tri;   // marca en el borde izquierdo
+                tri.addTriangle ((float) a.getX(), y - 4.0f, (float) a.getX(), y + 4.0f, (float) a.getX() + 6.0f, y);
+                g.setColour (c);
+                g.fillPath (tri);
+
+                const auto label = line.hz < 1000.0f ? juce::String (juce::roundToInt (line.hz)) + " Hz"
+                                                     : juce::String (line.hz / 1000.0f, 2) + "k";
+                auto tag = juce::Rectangle<float> ((float) a.getX() + 8.0f, y - 8.0f, 48.0f, 16.0f);
+                g.setColour (Theme::bg.withAlpha (0.8f));
+                g.fillRoundedRectangle (tag, 3.0f);
+                g.setColour (c);
+                g.setFont (Theme::font (11.0f, 600));
+                g.drawText (label, tag, juce::Justification::centred);
+            }
+            else
+            {
+                const float x = dbToX (line.levelDb);
+                g.setColour (c.withAlpha (0.5f));
+                g.drawHorizontalLine (juce::roundToInt (y), (float) a.getX(), (float) a.getRight());
+                g.setColour (c);
+                g.fillEllipse (x - 3.5f, y - 3.5f, 7.0f, 7.0f);
+            }
+        }
     }
 
     void paintAxis (juce::Graphics& g)
@@ -366,6 +422,7 @@ private:
         }
 
         paintEdgeLine (g, p);
+        paintToneLines (g, p, false);
 
         // leyenda (con fondo, para que se lea encima de las curvas)
         auto legend = juce::Rectangle<int> (p.getX() + 6, p.getY() + 6, juce::jmin (96, p.getWidth() - 12), 34);
@@ -390,7 +447,8 @@ private:
         if (hoverY < 0.0f) return;
         const double f = yToFreq (hoverY);
         g.setColour (juce::Colours::white.withAlpha (0.6f));
-        g.drawHorizontalLine (juce::roundToInt (hoverY), (float) spectroArea.getX(), (float) profileArea.getRight());
+        const int right = showProfile ? profileArea.getRight() : spectroArea.getRight();
+        g.drawHorizontalLine (juce::roundToInt (hoverY), (float) spectroArea.getX(), (float) right);
 
         juce::String text = freqLabel (f, true);
         if (detector != nullptr && detector->getSeconds() > 0.0)
@@ -426,7 +484,7 @@ private:
     juce::Rectangle<int> axisArea, spectroArea, profileArea, timeArea;
     juce::Image image;
     int writeX = 0;
-    bool dirty = false, showGuides = true;
+    bool dirty = false, showGuides = true, showProfile = true;
     int numBins = 0;
     double binHz = 1.0, columnSeconds = 0.01;
     float floorDb = -120.0f, hoverY = -1.0f;

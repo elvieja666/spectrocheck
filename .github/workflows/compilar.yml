@@ -56,10 +56,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # La versión sale de CMakeLists.txt (project(SpectroCheck VERSION x.y.z ...)).
+          VERSION=$(sed -n 's/^project(SpectroCheck VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          echo "Versión: $VERSION"
           gh release delete ultima --cleanup-tag -y || true
           gh release create ultima SpectroCheck-mac.zip \
-            --title "SpectroCheck (última versión)" \
-            --notes "Bajá SpectroCheck-mac.zip y seguí el paso 3 del LEEME para instalarlo." \
+            --title "SpectroCheck $VERSION (última versión)" \
+            --notes "Versión $VERSION. Bajá SpectroCheck-mac.zip y seguí el paso 3 del LEEME para instalarlo." \
             --target "$GITHUB_SHA"
 
       - name: Guardar también como artefacto

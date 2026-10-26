@@ -5,7 +5,7 @@ namespace
     const auto T = [] (const char* s) { return juce::String::fromUTF8 (s); };
 
     constexpr int topBarHeight = 58;
-    constexpr int bottomBarHeight = 58;
+    constexpr int bottomBarHeight = 82;
 
     constexpr int fftOrders[]   = { 12, 13, 14 };
     constexpr double hops[]     = { 0.004, 0.010, 0.025 };   // segundos por columna
@@ -54,6 +54,16 @@ SpectroCheckEditor::SpectroCheckEditor (SpectroCheckProcessor& p)
     };
     addAndMakeVisible (guidesButton);
 
+    profileButton.setClickingTogglesState (true);
+    profileButton.setToggleState ((bool) proc.settings.getProperty (Settings::profile, true), juce::dontSendNotification);
+    profileButton.setTooltip (T ("Muestra u oculta el panel de promedio y picos de la derecha."));
+    profileButton.onClick = [this]
+    {
+        proc.settings.setProperty (Settings::profile, profileButton.getToggleState(), nullptr);
+        view.setShowProfile (profileButton.getToggleState());
+    };
+    addAndMakeVisible (profileButton);
+
     freezeButton.setClickingTogglesState (true);
     freezeButton.setTooltip (T ("Detiene la imagen para mirarla tranquilo. La medición también se pausa."));
     addAndMakeVisible (freezeButton);
@@ -64,6 +74,7 @@ SpectroCheckEditor::SpectroCheckEditor (SpectroCheckProcessor& p)
 
     view.setDetector (&detector);
     view.setGuides (guidesButton.getToggleState());
+    view.setShowProfile (profileButton.getToggleState());
     addAndMakeVisible (view);
 
     bufL.resize (8192);
@@ -71,7 +82,7 @@ SpectroCheckEditor::SpectroCheckEditor (SpectroCheckProcessor& p)
     mono.resize (8192);
 
     setResizable (true, true);
-    setResizeLimits (860, 460, 2400, 1500);
+    setResizeLimits (980, 480, 2400, 1500);
     setSize ((int) proc.settings.getProperty (Settings::width, 1040),
              (int) proc.settings.getProperty (Settings::height, 600));
 
@@ -197,6 +208,9 @@ void SpectroCheckEditor::paint (juce::Graphics& g)
     g.setFont (Theme::font (17.0f, 600, -0.01f));
     g.drawText ("SpectroCheck", 18, 12, 160, 20, juce::Justification::centredLeft);
     g.setColour (Theme::faint);
+    g.setFont (Theme::font (11.0f, 500));
+    g.drawText (juce::String ("v") + JucePlugin_VersionString, 136, 15, 60, 16, juce::Justification::centredLeft);
+    g.setColour (Theme::faint);
     g.setFont (Theme::font (11.0f));
     g.drawText (T ("¿Hasta dónde llega el audio?"), 18, 32, 190, 14, juce::Justification::centredLeft);
 
@@ -209,6 +223,8 @@ void SpectroCheckEditor::paint (juce::Graphics& g)
 
     auto info = bottom.reduced (18, 0);
     info.removeFromRight (resetButton.getWidth() + 12);
+    auto linesRow = info.withHeight (18).withY (bottom.getY() + 56);   // tercera fila, todo el ancho
+    const int y0 = bottom.getY();
 
     // datos de la medición a la derecha
     juce::String stats;
@@ -221,28 +237,41 @@ void SpectroCheckEditor::paint (juce::Graphics& g)
     auto statsArea = info.removeFromRight (240);
     g.setFont (Theme::font (12.0f));
     g.setColour (Theme::dim);
-    g.drawText (measured, statsArea.withHeight (18).withY (bottom.getCentreY() - 19), juce::Justification::centredRight);
+    g.drawText (measured, statsArea.withHeight (18).withY (y0 + 13), juce::Justification::centredRight);
     g.setColour (Theme::faint);
     g.setFont (Theme::font (11.5f));
-    g.drawText (stats, statsArea.withHeight (16).withY (bottom.getCentreY() + 3), juce::Justification::centredRight);
+    g.drawText (stats, statsArea.withHeight (16).withY (y0 + 35), juce::Justification::centredRight);
 
     // veredicto
     const auto c = AnalyzerView::colourFor (verdict.kind);
     g.setColour (c);
-    g.fillEllipse ((float) info.getX(), (float) bottom.getCentreY() - 14.0f, 10.0f, 10.0f);
+    g.fillEllipse ((float) info.getX(), (float) y0 + 19.0f, 10.0f, 10.0f);
     if (verdict.kind != sc::CutoffResult::Kind::waiting)
     {
         g.setColour (c.withAlpha (0.25f));
-        g.drawEllipse ((float) info.getX() - 3.0f, (float) bottom.getCentreY() - 17.0f, 16.0f, 16.0f, 1.5f);
+        g.drawEllipse ((float) info.getX() - 3.0f, (float) y0 + 16.0f, 16.0f, 16.0f, 1.5f);
     }
 
     auto text = info.withTrimmedLeft (22).withTrimmedRight (12);
     g.setColour (verdict.kind == sc::CutoffResult::Kind::waiting ? Theme::text.withAlpha (0.7f) : Theme::text);
     g.setFont (Theme::font (16.0f, 600));
-    g.drawText (verdict.title, text.withHeight (22).withY (bottom.getCentreY() - 20), juce::Justification::centredLeft, true);
+    g.drawText (verdict.title, text.withHeight (22).withY (y0 + 13), juce::Justification::centredLeft, true);
     g.setColour (Theme::dim);
     g.setFont (Theme::font (12.5f));
-    g.drawFittedText (verdict.detail, text.withHeight (18).withY (bottom.getCentreY() + 3), juce::Justification::centredLeft, 1, 0.85f);
+    g.drawFittedText (verdict.detail, text.withHeight (18).withY (y0 + 35), juce::Justification::centredLeft, 1, 0.85f);
+
+    // líneas fijas
+    if (verdict.linesText.isNotEmpty())
+    {
+        bool anyAbove = false;
+        for (const auto& line : verdict.lines) anyAbove = anyAbove || line.aboveCutoff;
+        const auto lc = anyAbove ? Theme::codec : (verdict.lines.empty() ? Theme::faint : Theme::tone);
+
+        g.setColour (lc);
+        g.fillRect ((float) linesRow.getX() + 1.0f, (float) linesRow.getCentreY() - 1.0f, 8.0f, 2.0f);
+        g.setFont (Theme::font (12.5f, verdict.lines.empty() ? 400 : 500));
+        g.drawFittedText (verdict.linesText, linesRow.withTrimmedLeft (22), juce::Justification::centredLeft, 1, 0.85f);
+    }
 }
 
 void SpectroCheckEditor::resized()
@@ -256,23 +285,24 @@ void SpectroCheckEditor::resized()
 
     // controles alineados a la derecha de la barra de arriba
     auto controls = top.reduced (16, 0);
-    controls.removeFromLeft (200);
+    controls.removeFromLeft (196);
     const int comboY = 24, comboH = 26;
 
     auto place = [&] (juce::Component& c, int w)
     {
         auto slot = controls.removeFromRight (w);
         c.setBounds (slot.getX(), comboY, w, comboH);
-        controls.removeFromRight (10);
+        controls.removeFromRight (8);
     };
-    place (freezeButton, 88);
-    place (guidesButton, 72);
+    place (freezeButton, 84);
+    place (profileButton, 86);
+    place (guidesButton, 66);
     controls.removeFromRight (6);
-    place (channelBox, 112);
-    place (rangeBox, 92);
-    place (speedBox, 92);
-    place (fftBox, 84);
-    place (scaleBox, 92);
+    place (channelBox, 106);
+    place (rangeBox, 84);
+    place (speedBox, 86);
+    place (fftBox, 76);
+    place (scaleBox, 86);
 
     resetButton.setBounds (bottom.getRight() - 16 - 92, bottom.getCentreY() - 14, 92, 28);
 

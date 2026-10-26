@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Versión mínima de macOS")
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Arquitecturas")
 
-project(SpectroCheck VERSION 1.0.0 LANGUAGES C CXX)   # subir la versión hace que Logic vuelva a leer el nombre
+project(SpectroCheck VERSION 1.0.1 LANGUAGES C CXX)   # subir la versión hace que Logic vuelva a leer el nombre
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

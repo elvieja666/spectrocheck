@@ -53,14 +53,22 @@ Cuando dice **✅ Listo**, abrí Logic. Lo encontrás en **Audio Units > 0600mus
 
    También podés tocar **Reiniciar** cuando quieras. Abajo, al lado del total de huecos, el valor **"ahora"** muestra solo los últimos 5 segundos.
 
-### Qué significan los colores del veredicto
+### Qué te dice el veredicto
 
-| Color | Qué quiere decir |
-|---|---|
-| 🟠 Naranja | Corte abrupto: la señal se termina de golpe. Es la marca de un archivo con pérdida (MP3, AAC, Ogg). |
-| 🟢 Verde | Banda completa: llega hasta el final, o el corte está tan arriba que es del conversor, no de un códec. |
-| 🔵 Azul | Se apaga de a poco: es la grabación o la mezcla, no un códec. |
-| ⚪ Gris | Esperando señal. |
+| Color | Veredicto | Qué quiere decir |
+|---|---|---|
+| 🟢 Verde | **Parece original** | Llega hasta arriba y los agudos son continuos: no tiene huella de MP3/AAC. |
+| 🟠 Naranja | **Huella de MP3/AAC: posible 256–320 kbps** (o la calidad que corresponda) | Es o fue un archivo con pérdida. Si lo que estás escuchando es un WAV o AIFF, es un **falso WAV** hecho desde un MP3/AAC. |
+| 🟠 Naranja | **Alta resolución inflada** | Un archivo de 88.2/96 kHz que corta en ~22 kHz: viene de uno de 44.1/48 kHz. |
+| 🟡 Amarillo | **Dudoso** | Tiene algunos huecos, pocos para asegurarlo. Dejalo sonar más. |
+| 🔵 Azul | **No se puede asegurar** | La música no llega a los agudos (grabación muy oscura), que es donde se ve la huella. |
+| ⚪ Gris | **Esperando señal / Medición nueva** | Todavía no midió lo suficiente. |
+
+El plugin no puede saber si el archivo es WAV o MP3 (Logic le pasa audio, no el archivo): te dice si el audio tiene huella de MP3/AAC, y vos sabés qué tipo de archivo estás escuchando.
+
+**La calidad es una estimación.** Sale de cuántos huecos tienen los agudos y, si no llega a los agudos, de dónde corta. Se calibró con un master 24/48 pasado por el MP3 de Logic (96 a 320), LAME (128 a 320, V0 y V2) y AAC. Desde unos 60 segundos de escucha los rangos acertaron en todos los casos; con menos tiempo puede quedar un escalón arriba o abajo. Distintos codificadores y temas pueden dar valores algo distintos, por eso se muestra un rango. El AAC de alta calidad casi no tiene huecos en el centro, así que aparece como *"AAC de 192–256 o MP3 de 320"*.
+
+A la derecha, en chiquito, quedan los datos técnicos: hasta dónde llega la señal y el porcentaje de huecos en el estéreo y en el centro.
 
 ### Dónde suele cortar cada calidad (orientativo)
 

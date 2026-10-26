@@ -511,6 +511,7 @@ public:
             case K::resampled: return Theme::codec;
             case K::fullBand:  return Theme::good;
             case K::gradual:   return Theme::accent;
+            case K::doubtful:  return Theme::doubt;
             case K::waiting:   break;
         }
         return Theme::neutral;

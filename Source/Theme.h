@@ -22,6 +22,7 @@ namespace Theme
     const juce::Colour good      { 0xff4fd18b };   // verde: banda completa
     const juce::Colour neutral   { 0xff9aa3ad };   // gris: esperando / gradual
     const juce::Colour tone      { 0xff3fd5c8 };   // turquesa: líneas fijas
+    const juce::Colour doubt     { 0xffe6c14a };   // amarillo: dudoso
 
     inline juce::Typeface::Ptr typeface (int weight)
     {

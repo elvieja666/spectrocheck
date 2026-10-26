@@ -17,6 +17,7 @@ static const char* kindName (Kind k)
         case Kind::codec:     return "corte de códec";
         case Kind::resampled: return "remuestreado";
         case Kind::gradual:   return "gradual";
+        case Kind::doubtful:  return "dudoso";
     }
     return "?";
 }

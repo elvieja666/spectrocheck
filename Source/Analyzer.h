@@ -130,7 +130,7 @@ namespace sc
 
     struct CutoffResult
     {
-        enum class Kind { waiting, fullBand, codec, resampled, gradual };
+        enum class Kind { waiting, fullBand, codec, resampled, gradual, doubtful };
         Kind kind = Kind::waiting;
         float edgeHz = 0.0f;      // hasta dónde llega la señal
         float dropDb = 0.0f;      // cuánto cae justo arriba del corte
@@ -143,6 +143,9 @@ namespace sc
         float holesMid = -1.0f, holesSide = -1.0f;
         float holesRecent = -1.0f;      // lo mismo, pero solo los últimos 5 segundos
         juce::String holesText;
+
+        juce::String quality;           // calidad estimada si hay huella de MP3/AAC ("320 kbps")
+        juce::String techText;          // resumen técnico corto para mostrar chiquito
 
         bool linesReady = false;        // ya pasó el tiempo mínimo para buscar líneas
         std::vector<ToneLine> lines;    // las más marcadas primero
@@ -405,6 +408,7 @@ namespace sc
             }
 
             describeLines (r, reachesTop ? nyq : edgeHz);
+            finalize (r);
             return r;
         }
 
@@ -596,22 +600,109 @@ namespace sc
                           + p (r.holesMid) + txt (" centro")
                           + (r.holesRecent >= 0.0f ? txt (" · ahora ") + p (r.holesRecent) : juce::String());
 
-            if (score >= holesStrongPct)
+            const bool lossyAlready = r.kind == CutoffResult::Kind::codec || r.kind == CutoffResult::Kind::resampled;
+            if (score >= holesStrongPct && ! lossyAlready)
+                r.kind = CutoffResult::Kind::codec;
+            else if (score >= holesSomePct && ! lossyAlready)
+                r.kind = CutoffResult::Kind::doubtful;
+        }
+
+        //======================================================================
+        //  Veredicto final en palabras simples
+        //======================================================================
+
+        // Calidad aproximada de un archivo con pérdida. Calibrado con un master 24/48 pasado
+        // por el MP3 de Logic, LAME (CBR y VBR) y AAC: los huecos del centro bajan a medida
+        // que sube la calidad. Si no llega a los agudos, se usa la frecuencia de corte.
+        static juce::String estimateQuality (const CutoffResult& r)
+        {
+            if (r.holesMeasured && r.holesMid >= 0.0f)
             {
-                const bool wasCodec = r.kind == CutoffResult::Kind::codec || r.kind == CutoffResult::Kind::resampled;
-                if (! wasCodec)
-                {
-                    r.kind  = CutoffResult::Kind::codec;
-                    r.title = txt ("Huecos en los agudos: probable MP3/AAC");
-                    r.detail = txt ("Llega hasta ") + juce::String (contentTopHz / 1000.0, 1)
-                               + txt (" kHz, pero los agudos se apagan de a ratos (")
-                               + p (score) + txt (" del tiempo). Un WAV original no hace eso.");
-                }
+                const float m = r.holesMid;
+                // Rangos que se superponen a propósito: según la parte del tema que suene,
+                // el mismo archivo puede caer un escalón más arriba o más abajo.
+                if (m >= 45.0f) return txt ("128 kbps o menos");
+                if (m >= 22.0f) return txt ("160–192 kbps");
+                if (m >= 8.0f)  return txt ("192–256 kbps");
+                if (m >= 2.0f)  return txt ("256–320 kbps");
+                if (m >= 0.8f)  return txt ("320 kbps");
+                return txt ("AAC de 192–256 o MP3 de 320");
             }
-            else if (score >= holesSomePct && r.kind != CutoffResult::Kind::codec && r.kind != CutoffResult::Kind::resampled)
+            const double hz = r.edgeHz;
+            if (hz < 11500.0) return txt ("64 kbps o menos");
+            if (hz < 15500.0) return txt ("96 kbps o menos");
+            if (hz < 17500.0) return txt ("96–128 kbps");
+            if (hz < 18500.0) return txt ("128–160 kbps");
+            if (hz < 19500.0) return txt ("192 kbps");
+            if (hz < 20300.0) return txt ("256 kbps");
+            return txt ("320 kbps");
+        }
+
+        void finalize (CutoffResult& r) const
+        {
+            using K = CutoffResult::Kind;
+            const auto kHz = [] (double hz) { return juce::String (hz / 1000.0, 1) + " kHz"; };
+            const auto p = [] (float v) { return (v < 10.0f ? juce::String (v, 1) : juce::String (juce::roundToInt (v))) + "%"; };
+
+            // datos técnicos, cortos
+            r.techText = txt ("hasta ") + kHz (r.edgeHz);
+            if (r.holesMeasured)
             {
-                r.detail = txt ("Algunos huecos en los agudos (") + p (score)
-                           + txt ("): podría ser un MP3/AAC de muy alta calidad. Revisá en Lateral (S).");
+                r.techText << txt (" · huecos ");
+                if (r.holesSide >= 0.0f) r.techText << txt ("est. ") << p (r.holesSide) << txt (" · ");
+                r.techText << txt ("centro ") << p (r.holesMid);
+            }
+            else if (r.edgeHz >= holeMinEdgeHz)
+                r.techText << txt (" · midiendo huecos");
+
+            const bool needsTime = seconds < 60.0;
+            switch (r.kind)
+            {
+                case K::codec:
+                    r.quality = estimateQuality (r);
+                    r.title  = txt ("Huella de MP3/AAC: posible ") + r.quality;
+                    r.detail = txt ("Si el archivo es WAV o AIFF, es un falso WAV hecho desde un MP3/AAC.")
+                               + (needsTime ? txt (" Calidad estimada con ") + juce::String (juce::roundToInt (seconds))
+                                              + txt (" s: se afina mientras suena.") : juce::String());
+                    break;
+
+                case K::resampled:
+                    r.title  = txt ("Alta resolución inflada");
+                    r.detail = txt ("Corta en ") + kHz (r.edgeHz) + txt (" aunque el archivo es de ") + kHz (sampleRate)
+                               + txt (": viene de una fuente de 44.1/48 kHz o de un MP3/AAC.");
+                    break;
+
+                case K::doubtful:
+                    r.title  = txt ("Dudoso: podría ser un MP3/AAC de muy alta calidad");
+                    r.detail = txt ("Tiene algunos huecos en los agudos, pocos para asegurarlo. Dejalo sonar más o probá otra parte del tema.");
+                    break;
+
+                case K::fullBand:
+                case K::gradual:
+                    if (r.holesMeasured)
+                    {
+                        const bool fadesOut = r.kind == K::gradual;
+                        r.kind   = K::fullBand;   // verde: el color dice lo mismo que el texto
+                        r.title  = txt ("Parece original");
+                        r.detail = (fadesOut ? txt ("Se apaga de a poco cerca de ") + kHz (r.edgeHz)
+                                                         : txt ("Llega hasta ") + kHz (r.edgeHz))
+                                   + txt (" y los agudos son continuos: no tiene huella de MP3/AAC.");
+                    }
+                    else if (r.edgeHz >= holeMinEdgeHz)
+                    {
+                        r.title  = txt ("Analizando...");
+                        r.detail = txt ("Llega hasta ") + kHz (r.edgeHz) + txt (". Falta medir los agudos un poco más.");
+                    }
+                    else
+                    {
+                        r.title  = txt ("No se puede asegurar");
+                        r.detail = txt ("La música se apaga de a poco cerca de ") + kHz (r.edgeHz)
+                                   + txt (" y no llega a los agudos, donde se ve la huella de un MP3. Probá una parte con más brillo.");
+                    }
+                    break;
+
+                case K::waiting:
+                    break;
             }
         }
 

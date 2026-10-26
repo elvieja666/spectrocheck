@@ -241,8 +241,6 @@ void SpectroCheckEditor::paint (juce::Graphics& g)
     stats << juce::String (analyzer.getSampleRate() / 1000.0, 1) << " kHz  " << T ("·") << "  FFT " << analyzer.getFftSize()
           << " (" << juce::String (analyzer.binHz(), 1) << " Hz)";
     juce::String measured = T ("Medido: ") + juce::String (juce::roundToInt (verdict.seconds)) + " s";
-    if (verdict.kind != sc::CutoffResult::Kind::waiting && verdict.dropDb > 0.5f)
-        measured << "  " << T ("·") << T ("  caída ") << juce::String (juce::roundToInt (verdict.dropDb)) << " dB";
 
     auto statsArea = info.removeFromRight (330);
     auto linesRow = info.withHeight (18).withY (y0 + 56);   // tercera fila de la izquierda
@@ -250,13 +248,11 @@ void SpectroCheckEditor::paint (juce::Graphics& g)
     g.setColour (Theme::dim);
     g.drawText (measured, statsArea.withHeight (18).withY (y0 + 13), juce::Justification::centredRight);
 
-    if (verdict.holesText.isNotEmpty())
+    if (verdict.techText.isNotEmpty())   // datos técnicos, chiquitos
     {
-        const float score = juce::jmax (verdict.holesMid, verdict.holesSide);
-        g.setColour (verdict.holesMeasured && score >= sc::CutoffDetector::holesStrongPct ? Theme::codec
-                     : verdict.holesMeasured && score >= sc::CutoffDetector::holesSomePct ? Theme::text : Theme::dim);
-        g.setFont (Theme::font (12.0f, 500));
-        g.drawFittedText (verdict.holesText, statsArea.withHeight (18).withY (y0 + 35), juce::Justification::centredRight, 1, 0.85f);
+        g.setColour (Theme::dim);
+        g.setFont (Theme::font (11.5f));
+        g.drawFittedText (verdict.techText, statsArea.withHeight (18).withY (y0 + 35), juce::Justification::centredRight, 1, 0.85f);
     }
 
     g.setColour (Theme::faint);

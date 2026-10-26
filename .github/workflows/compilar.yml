@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+#  GitHub compila SpectroCheck en una Mac en la nube cada vez que subís
+#  cambios (o cuando tocás "Run workflow" en la pestaña Actions).
+#  El plugin terminado aparece en la sección "Releases" del repositorio.
+# ---------------------------------------------------------------------------
+name: Compilar SpectroCheck
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - name: Bajar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar (descarga JUCE)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DSPECTROCHECK_TESTS=ON
+
+      - name: Compilar
+        run: cmake --build build --config Release --target SpectroCheck_AU SpectroCheck_VST3 SpectroCheckTests -j 4
+
+      - name: Pruebas automáticas (si algo falla, no se publica)
+        run: ./build/SpectroCheckTests_artefacts/Release/SpectroCheckTests
+
+      - name: Firmar y empaquetar
+        run: |
+          set -e
+          ART="build/SpectroCheck_artefacts/Release"
+          mkdir -p salida
+          cp -R "$ART/AU/SpectroCheck.component" salida/
+          cp -R "$ART/VST3/SpectroCheck.vst3" salida/
+          codesign --force --deep -s - "salida/SpectroCheck.component"
+          codesign --force --deep -s - "salida/SpectroCheck.vst3"
+          cp instalar.command salida/
+          cp Resources/Fonts/OFL.txt "salida/Licencia letra Inter (OFL).txt"
+          chmod +x salida/instalar.command
+          cd salida
+          ditto -c -k --sequesterRsrc . ../SpectroCheck-mac.zip
+
+      - name: Validar el Audio Unit (igual que Logic)
+        continue-on-error: true
+        run: |
+          killall -9 AudioComponentRegistrar || true
+          sleep 2
+          auval -v aufx Spck Ms06 | tail -5
+
+      - name: Publicar en Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ultima --cleanup-tag -y || true
+          gh release create ultima SpectroCheck-mac.zip \
+            --title "SpectroCheck (última versión)" \
+            --notes "Bajá SpectroCheck-mac.zip y seguí el paso 3 del LEEME para instalarlo." \
+            --target "$GITHUB_SHA"
+
+      - name: Guardar también como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpectroCheck-mac
+          path: SpectroCheck-mac.zip

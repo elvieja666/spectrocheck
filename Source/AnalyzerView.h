@@ -100,12 +100,15 @@ public:
     {
         if (spectroArea.isEmpty()) return;
         image = juce::Image (juce::Image::RGB, juce::jmax (1, spectroArea.getWidth()), juce::jmax (1, spectroArea.getHeight()), true);
+        strip = juce::Image (juce::Image::RGB, image.getWidth(), 1, false);
+        strip.clear (strip.getBounds(), Theme::control);
         writeX = 0;
         repaint();
     }
 
     // --- datos ---------------------------------------------------------------
-    void addColumn (const float* db, int n)
+    // holeValue: cuánto de los agudos se apagó en este momento (0..1), o -1 si no se pudo medir.
+    void addColumn (const float* db, int n, float holeValue = -1.0f)
     {
         if (! image.isValid() || n != numBins || rowBin0.empty()) return;
 
@@ -131,19 +134,23 @@ public:
             px.setPixelColour (0, y, juce::Colour (lut[(size_t) idx]));
         }
 
+        if (strip.isValid() && writeX < strip.getWidth())
+            strip.setPixelAt (writeX, 0, holeColour (holeValue));
+
         writeX = (writeX + 1) % image.getWidth();
         dirty = true;
     }
 
     void flush()
     {
-        if (dirty) { repaint (spectroArea); dirty = false; }
+        if (dirty) { repaint (spectroArea.getUnion (stripArea)); dirty = false; }
     }
 
     // --- dibujo --------------------------------------------------------------
     void resized() override
     {
         auto r = getLocalBounds();
+        auto stripRow = r.removeFromTop (stripHeight + 6);   // franja de huecos arriba de todo
         axisArea = r.removeFromLeft (52);
         if (showProfile)
         {
@@ -156,6 +163,8 @@ public:
         timeArea = r.removeFromBottom (18);
         axisArea.removeFromBottom (18);
         spectroArea = r;
+        stripArea = { spectroArea.getX(), stripRow.getY(), spectroArea.getWidth(), stripHeight };
+        stripLabelArea = { 0, stripRow.getY(), axisArea.getWidth() - 8, stripHeight };
         rebuildRows();
         clearHistory();
     }
@@ -164,6 +173,7 @@ public:
     {
         g.fillAll (Theme::bg);
         paintSpectrogram (g);
+        paintStrip (g);
         paintAxis (g);
         if (showProfile) paintProfile (g);
         paintHover (g);
@@ -305,6 +315,33 @@ private:
         const float y = freqToY (result.edgeHz);
         g.setColour (c.withAlpha (0.9f));
         g.drawHorizontalLine (juce::roundToInt (y), (float) a.getX(), (float) a.getRight());
+    }
+
+    // Franja de huecos: gris = agudos continuos, naranja = los agudos se apagaron de golpe
+    // (huella de MP3/AAC). Corre junto con el espectrograma.
+    static juce::Colour holeColour (float v)
+    {
+        if (v < 0.0f) return Theme::bar;                                   // no se pudo medir
+        const float t = juce::jlimit (0.0f, 1.0f, (v - 0.05f) / 0.45f);
+        return Theme::control.interpolatedWith (Theme::codec, t);
+    }
+
+    void paintStrip (juce::Graphics& g)
+    {
+        if (strip.isValid())
+        {
+            const int w = strip.getWidth(), older = w - writeX;
+            const auto a = stripArea;
+            g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+            g.drawImage (strip, a.getX(), a.getY(), older, a.getHeight(), writeX, 0, older, 1);
+            if (writeX > 0)
+                g.drawImage (strip, a.getX() + older, a.getY(), writeX, a.getHeight(), 0, 0, writeX, 1);
+        }
+        g.setColour (Theme::line);
+        g.drawRect (stripArea.expanded (1), 1);
+        g.setColour (Theme::dim);
+        g.setFont (Theme::font (10.0f, 600, 0.04f));
+        g.drawText ("HUECOS", stripLabelArea, juce::Justification::centredRight);
     }
 
     // Líneas fijas: una línea fina sobre el espectrograma con su frecuencia a la
@@ -481,8 +518,9 @@ public:
 
 private:
     FreqAxis axis;
-    juce::Rectangle<int> axisArea, spectroArea, profileArea, timeArea;
-    juce::Image image;
+    static constexpr int stripHeight = 10;
+    juce::Rectangle<int> axisArea, spectroArea, profileArea, timeArea, stripArea, stripLabelArea;
+    juce::Image image, strip;
     int writeX = 0;
     bool dirty = false, showGuides = true, showProfile = true;
     int numBins = 0;

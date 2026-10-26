@@ -156,6 +156,46 @@ static void checkLines (const char* name, const sc::CutoffResult& r, bool ok)
     if (! ok) ++failures;
 }
 
+// Estéreo "tipo música" de banda completa. Si mp3Holes es true, los agudos (>15 kHz) del
+// canal lateral se borran por bloques de 576 muestras el 40% del tiempo, como hace un
+// codificador MP3 cuando no le alcanzan los bits. El centro queda intacto.
+static void stereoTest (double sr, double seconds, bool mp3Holes, bool mono, std::vector<float>& L, std::vector<float>& R)
+{
+    auto mid  = noiseUpTo (sr, 21000, seconds, 50);
+    auto sLow = noiseUpTo (sr, 15000, seconds, 51);
+    auto sAll = noiseUpTo (sr, 21000, seconds, 52);
+    std::mt19937 rng (53);
+    std::uniform_real_distribution<double> uni (0.0, 1.0);
+    const size_t n = mid.size();
+    L.resize (n); R.resize (n);
+    bool on = true;
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (i % 576 == 0) on = ! mp3Holes || uni (rng) > 0.4;
+        // lateral = graves y medios siempre + agudos (sAll - sLow) solo cuando "on"
+        const float side = mono ? 0.0f : 0.5f * (sLow[i] + (on ? (sAll[i] - sLow[i]) : 0.0f));
+        L[i] = mid[i] + side;
+        R[i] = mid[i] - side;
+    }
+}
+
+static sc::CutoffResult measureStereo (const std::vector<float>& L, const std::vector<float>& R, double sr, int fftOrder)
+{
+    sc::SpectrumAnalyzer an;
+    an.prepare (sr, fftOrder, 0.01);
+    sc::CutoffDetector det;
+    det.reset (an.numBins(), an.binHz(), sr);
+    std::vector<float> m (L.size());
+    for (size_t i = 0; i < L.size(); ++i) m[i] = 0.5f * (L[i] + R[i]);
+    for (size_t pos = 0; pos < L.size(); pos += 4096)
+    {
+        const int n = (int) std::min<size_t> (4096, L.size() - pos);
+        det.pushStereo (L.data() + pos, R.data() + pos, n);
+        an.push (m.data() + pos, n, [&] (const float* db, int bins, float rms) { det.addFrame (db, bins, rms, an.frameSeconds()); });
+    }
+    return det.analyze();
+}
+
 static sc::CutoffResult measure (const std::vector<float>& x, double sr, int fftOrder)
 {
     sc::SpectrumAnalyzer an;
@@ -236,6 +276,34 @@ int main()
         auto d = measure (shortOne, 44100, 13);
         checkLines ("Menos de 5 s: todavía no informa", d,
                     ! d.linesReady && d.lines.empty() && d.kind == Kind::codec && d.edgeHz < 16400);
+    }
+
+    // --- huecos en los agudos ---
+    std::printf ("\n--- Huecos en los agudos ---\n");
+    {
+        auto holes = [] (const char* name, const sc::CutoffResult& r, bool ok)
+        {
+            std::printf ("%s %-34s -> %-15s | %s | %s\n", ok ? "OK   " : "FALLA", name, kindName (r.kind),
+                         r.holesText.toRawUTF8(), r.title.toRawUTF8());
+            if (! ok) ++failures;
+        };
+        for (double sr : { 44100.0, 48000.0 })
+        {
+            std::vector<float> L, R;
+            stereoTest (sr, 8, false, false, L, R);
+            auto a = measureStereo (L, R, sr, 13);
+            holes (sr > 46000 ? "WAV estéreo continuo (48)" : "WAV estéreo continuo (44.1)", a,
+                   a.holesMeasured && a.holesSide < 1.5f && a.holesMid < 1.5f && a.kind != Kind::codec);
+
+            stereoTest (sr, 8, true, false, L, R);
+            auto b = measureStereo (L, R, sr, 13);
+            holes (sr > 46000 ? "MP3 sin corte, lateral con huecos (48)" : "MP3 sin corte, lateral con huecos (44.1)", b,
+                   b.holesMeasured && b.holesSide >= sc::CutoffDetector::holesStrongPct && b.kind == Kind::codec);
+
+            stereoTest (sr, 8, false, true, L, R);
+            auto c = measureStereo (L, R, sr, 13);
+            holes (sr > 46000 ? "Mono (48)" : "Mono (44.1)", c, c.holesSide < 0.0f && c.kind != Kind::codec);
+        }
     }
 
     std::printf ("\n%s\n", failures == 0 ? "Todas las pruebas OK" : "HAY PRUEBAS QUE FALLARON");

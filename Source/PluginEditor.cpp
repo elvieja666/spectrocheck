@@ -87,6 +87,7 @@ SpectroCheckEditor::SpectroCheckEditor (SpectroCheckProcessor& p)
              (int) proc.settings.getProperty (Settings::height, 600));
 
     proc.fifo.clear();
+    seenPlayStarts = proc.playStarts.load();
     configure();
     startTimerHz (60);
 }
@@ -143,9 +144,10 @@ void SpectroCheckEditor::configure()
     updateVerdict();
 }
 
-void SpectroCheckEditor::resetMeasurement()
+void SpectroCheckEditor::resetMeasurement (const juce::String& note)
 {
     detector.reset (analyzer.numBins(), analyzer.binHz(), analyzer.getSampleRate());
+    detector.setResetNote (note);
     updateVerdict();
 }
 
@@ -153,6 +155,13 @@ void SpectroCheckEditor::timerCallback()
 {
     if (std::abs (proc.currentSampleRate.load() - configuredRate) > 0.5)
         configure();
+
+    // Le dieron Play en Logic: cada reproducción es una medición nueva.
+    if (const int starts = proc.playStarts.load(); starts != seenPlayStarts)
+    {
+        seenPlayStarts = starts;
+        resetMeasurement (T ("Le diste Play: medición nueva."));
+    }
 
     const bool frozen = freezeButton.getToggleState();
     const int channel = channelBox.getSelectedItemIndex();
@@ -235,7 +244,7 @@ void SpectroCheckEditor::paint (juce::Graphics& g)
     if (verdict.kind != sc::CutoffResult::Kind::waiting && verdict.dropDb > 0.5f)
         measured << "  " << T ("·") << T ("  caída ") << juce::String (juce::roundToInt (verdict.dropDb)) << " dB";
 
-    auto statsArea = info.removeFromRight (270);
+    auto statsArea = info.removeFromRight (330);
     auto linesRow = info.withHeight (18).withY (y0 + 56);   // tercera fila de la izquierda
     g.setFont (Theme::font (12.0f));
     g.setColour (Theme::dim);

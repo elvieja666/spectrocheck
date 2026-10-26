@@ -88,8 +88,10 @@ public:
 
     StereoFifo fifo;
     std::atomic<double> currentSampleRate { 44100.0 };
+    std::atomic<int> playStarts { 0 };   // sube cada vez que Logic empieza a reproducir
     juce::ValueTree settings { "SpectroCheckSettings" };
 
 private:
+    bool wasPlaying = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectroCheckProcessor)
 };

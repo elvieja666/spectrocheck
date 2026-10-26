@@ -141,6 +141,7 @@ namespace sc
         // 8-14 kHz sigue sonando. -1 = no se pudo medir (por ejemplo, lateral de un tema mono).
         bool  holesMeasured = false;
         float holesMid = -1.0f, holesSide = -1.0f;
+        float holesRecent = -1.0f;      // lo mismo, pero solo los últimos 5 segundos
         juce::String holesText;
 
         bool linesReady = false;        // ya pasó el tiempo mínimo para buscar líneas
@@ -183,6 +184,12 @@ namespace sc
         static constexpr float  holesStrongPct = 6.0f;    // desde acá: probable MP3/AAC
         static constexpr float  holesSomePct = 1.5f;      // desde acá: "algunos huecos"
 
+        // Si los huecos de los últimos 5 s contradicen fuerte al total, cambió el audio
+        // (por ejemplo, de un WAV a un MP3 con solo/mute) y se empieza a medir de nuevo.
+        static constexpr double recentSeconds = 5.0;
+        static constexpr double switchMinSeconds = 8.0;   // no decidir con muy poco medido
+        static constexpr float  switchCleanPct = 1.0f;    // "ahora" sin huecos (el WAV nunca pasó de 1.3% en 5 s)
+
         void reset (int bins, double newBinHz, double newSampleRate)
         {
             numBins = bins;
@@ -215,7 +222,10 @@ namespace sc
 
             // Después de un rato de silencio arranca una medición nueva (otra canción).
             if (silentSeconds >= autoResetSilence && frames > 0)
+            {
                 reset (numBins, binHz, sampleRate);
+                resetNote = txt ("Hubo un silencio: medición nueva.");
+            }
             silentSeconds = 0.0;
 
             for (int b = 0; b < n; ++b)
@@ -258,6 +268,9 @@ namespace sc
             return v;
         }
 
+        // Texto que explica por qué se reinició (se muestra mientras espera señal).
+        void setResetNote (const juce::String& note) { resetNote = note; }
+
         double getSeconds() const { return seconds; }
         int    getNumBins() const { return numBins; }
         double getBinHz() const   { return binHz; }
@@ -284,8 +297,9 @@ namespace sc
 
             if (frames == 0 || seconds < 1.0)
             {
-                r.title  = txt ("Esperando señal");
-                r.detail = txt ("Reproducí audio: hace falta al menos 1 segundo con sonido para medir.");
+                r.title  = resetNote.isNotEmpty() ? txt ("Medición nueva") : txt ("Esperando señal");
+                r.detail = resetNote.isNotEmpty() ? resetNote + txt (" Hace falta al menos 1 segundo con sonido.")
+                                                  : txt ("Reproducí audio: hace falta al menos 1 segundo con sonido para medir.");
                 return r;
             }
 
@@ -377,7 +391,19 @@ namespace sc
                 r.detail = txt ("Caída suave: parece la grabación o la mezcla, no un códec. Probá en una parte con más brillo.");
             }
 
+            resetNote = {};
             applyHoles (r, reachesTop ? nyq : edgeHz);
+
+            if (audioChanged (r))
+            {
+                reset (numBins, binHz, sampleRate);
+                resetNote = txt ("El audio cambió (los huecos de ahora no coinciden con los de antes): medición nueva.");
+                CutoffResult fresh;
+                fresh.title  = txt ("Medición nueva");
+                fresh.detail = resetNote;
+                return fresh;
+            }
+
             describeLines (r, reachesTop ? nyq : edgeHz);
             return r;
         }
@@ -430,6 +456,9 @@ namespace sc
             deadS.assign (bandBins, 0u);
             holeOkM = holeOkS = 0;
             holePos = holeFilled = holeSince = 0;
+            recent.assign ((size_t) juce::jmax (1, (int) std::round (recentSeconds * sampleRate / (size / 2))), RecentFrame {});
+            recentPos = 0;
+            recentSum = {};
             stripTopBin = holeB1;
             stripValue = -1.0f;
         }
@@ -492,6 +521,47 @@ namespace sc
             }
             if (stripCount > 0)
                 stripValue = juce::jmax (stripValue, (float) stripDead / (float) stripCount);
+
+            // ventana de los últimos 5 segundos (celdas hasta stripTopBin, como la franja)
+            RecentFrame now;
+            const int cells = stripTopBin - holeB0 + 1;
+            if (okM)
+            {
+                now.cM = cells;
+                for (int b = holeB0; b <= stripTopBin; ++b) if (holeWorkM[(size_t) b] < mRef - holeDepthDb) ++now.dM;
+            }
+            if (okS)
+            {
+                now.cS = cells;
+                for (int b = holeB0; b <= stripTopBin; ++b) if (holeWorkS[(size_t) b] < sRef - holeDepthDb) ++now.dS;
+            }
+            auto& old = recent[(size_t) recentPos];
+            recentSum.dM += now.dM - old.dM;  recentSum.cM += now.cM - old.cM;
+            recentSum.dS += now.dS - old.dS;  recentSum.cS += now.cS - old.cS;
+            recentSum.fM += (now.cM > 0) - (old.cM > 0);
+            recentSum.fS += (now.cS > 0) - (old.cS > 0);
+            old = now;
+            recentPos = (recentPos + 1) % (int) recent.size();
+        }
+
+        // Huecos de los últimos 5 s (en %), o -1 si no hubo suficientes cuadros medibles.
+        float recentHoles() const
+        {
+            const long need = (long) recent.size() / 3;   // al menos un tercio de la ventana medible
+            const float m = recentSum.fM >= need && recentSum.cM > 0 ? 100.0f * (float) recentSum.dM / (float) recentSum.cM : -1.0f;
+            const float sd = recentSum.fS >= need && recentSum.cS > 0 ? 100.0f * (float) recentSum.dS / (float) recentSum.cS : -1.0f;
+            return juce::jmax (m, sd);
+        }
+
+        bool audioChanged (const CutoffResult& r) const
+        {
+            if (! r.holesMeasured || seconds < switchMinSeconds || r.holesRecent < 0.0f) return false;
+            const float total = juce::jmax (r.holesMid, r.holesSide);
+            const bool nowHoley = r.holesRecent >= holesStrongPct && total < holesStrongPct       // de limpio a MP3
+                                  && r.holesRecent >= 3.0f * total;
+            const bool nowClean = r.holesRecent <= switchCleanPct && total >= holesStrongPct      // de MP3 a limpio
+                                  && recentSum.fM >= (long) recent.size() * 2 / 3;
+            return nowHoley || nowClean;
         }
 
         void applyHoles (CutoffResult& r, double contentTopHz)
@@ -516,13 +586,15 @@ namespace sc
             };
 
             r.holesMeasured = true;
+            r.holesRecent = recentHoles();
             r.holesMid  = pct (deadM, holeOkM);
             r.holesSide = holeOkS >= 100 ? pct (deadS, holeOkS) : -1.0f;
             const float score = juce::jmax (r.holesMid, r.holesSide);
 
             const auto p = [] (float v) { return juce::String (v < 10.0f ? juce::String (v, 1) : juce::String (juce::roundToInt (v))) + "%"; };
             r.holesText = txt ("Huecos en agudos: ") + (r.holesSide >= 0.0f ? p (r.holesSide) + txt (" estéreo · ") : juce::String())
-                          + p (r.holesMid) + txt (" centro");
+                          + p (r.holesMid) + txt (" centro")
+                          + (r.holesRecent >= 0.0f ? txt (" · ahora ") + p (r.holesRecent) : juce::String());
 
             if (score >= holesStrongPct)
             {
@@ -722,6 +794,13 @@ namespace sc
         int holeB0 = 0, holeB1 = 0, refB0 = 0, refB1 = 0, stripTopBin = 0;
         double holeBinHz = 1.0;
         float holeAmpScale = 1.0f, stripValue = -1.0f;
+
+        struct RecentFrame { long dM = 0, cM = 0, dS = 0, cS = 0; };
+        struct RecentSum   { long dM = 0, cM = 0, dS = 0, cS = 0, fM = 0, fS = 0; };
+        std::vector<RecentFrame> recent;
+        int recentPos = 0;
+        RecentSum recentSum;
+        juce::String resetNote;
         long frames = 0;
         double seconds = 0.0, silentSeconds = 0.0;
     };

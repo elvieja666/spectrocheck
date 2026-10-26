@@ -187,11 +187,14 @@ static sc::CutoffResult measureStereo (const std::vector<float>& L, const std::v
     det.reset (an.numBins(), an.binHz(), sr);
     std::vector<float> m (L.size());
     for (size_t i = 0; i < L.size(); ++i) m[i] = 0.5f * (L[i] + R[i]);
+    size_t sinceAnalyze = 0;
     for (size_t pos = 0; pos < L.size(); pos += 4096)
     {
         const int n = (int) std::min<size_t> (4096, L.size() - pos);
         det.pushStereo (L.data() + pos, R.data() + pos, n);
         an.push (m.data() + pos, n, [&] (const float* db, int bins, float rms) { det.addFrame (db, bins, rms, an.frameSeconds()); });
+        // como la ventana del plugin: revisar el veredicto 5 veces por segundo
+        if ((sinceAnalyze += (size_t) n) >= (size_t) (sr * 0.2)) { sinceAnalyze = 0; det.analyze(); }
     }
     return det.analyze();
 }
@@ -303,6 +306,28 @@ int main()
             stereoTest (sr, 8, false, true, L, R);
             auto c = measureStereo (L, R, sr, 13);
             holes (sr > 46000 ? "Mono (48)" : "Mono (44.1)", c, c.holesSide < 0.0f && c.kind != Kind::codec);
+        }
+
+        // Cambio de audio sin silencio (solo/mute en Logic mientras suena): tiene que reiniciarse
+        // solo y terminar diciendo lo que suena al final.
+        {
+            const double sr = 48000.0;
+            std::vector<float> cl, cr, hl, hr;
+            stereoTest (sr, 12, false, false, cl, cr);   // limpio
+            stereoTest (sr, 12, true,  false, hl, hr);   // con huecos
+            auto join = [] (std::vector<float> a, const std::vector<float>& b) { a.insert (a.end(), b.begin(), b.end()); return a; };
+
+            auto d = measureStereo (join (cl, hl), join (cr, hr), sr, 13);
+            holes ("Cambia de WAV a MP3 mientras suena", d, d.kind == Kind::codec && d.seconds < 12.0f);
+
+            auto e = measureStereo (join (hl, cl), join (hr, cr), sr, 13);
+            holes ("Cambia de MP3 a WAV mientras suena", e, e.kind != Kind::codec && e.seconds < 12.0f);
+
+            auto f = measureStereo (join (hl, hl), join (hr, hr), sr, 13);
+            holes ("MP3 largo: no se reinicia de más", f, f.kind == Kind::codec && f.seconds > 20.0f);
+
+            auto g = measureStereo (join (cl, cl), join (cr, cr), sr, 13);
+            holes ("WAV largo: no se reinicia de más", g, g.kind != Kind::codec && g.seconds > 20.0f);
         }
     }
 

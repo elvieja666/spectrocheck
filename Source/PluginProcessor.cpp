@@ -29,6 +29,16 @@ void SpectroCheckProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     for (int ch = numIn; ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
 
+    // Avisar a la ventana cuando Logic arranca a reproducir (para empezar una medición nueva).
+    if (auto* head = getPlayHead())
+        if (auto position = head->getPosition())
+        {
+            const bool playing = position->getIsPlaying();
+            if (playing && ! wasPlaying)
+                playStarts.fetch_add (1);
+            wasPlaying = playing;
+        }
+
     if (numIn == 0) return;
     const float* l = buffer.getReadPointer (0);
     const float* r = numIn > 1 ? buffer.getReadPointer (1) : l;

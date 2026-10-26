@@ -46,7 +46,12 @@ Cuando dice **✅ Listo**, abrí Logic. Lo encontrás en **Audio Units > 0600mus
 
 1. Poné SpectroCheck en la pista del audio que querés revisar (o en el master).
 2. Dale play. A los pocos segundos aparece el veredicto abajo.
-3. Para revisar otra canción tocá **Reiniciar**. Si parás y pasan 2 segundos de silencio, la medición se reinicia sola.
+3. La medición se reinicia sola, así cada archivo se mide por separado:
+   - **cada vez que le das Play** en Logic;
+   - **después de 2 segundos de silencio**;
+   - **cuando el audio cambia mientras suena** (por ejemplo, si pasás de un WAV a un MP3 con solo o mute): si los huecos de los últimos 5 segundos no coinciden para nada con lo medido antes, empieza de nuevo.
+
+   También podés tocar **Reiniciar** cuando quieras. Abajo, al lado del total de huecos, el valor **"ahora"** muestra solo los últimos 5 segundos.
 
 ### Qué significan los colores del veredicto
 

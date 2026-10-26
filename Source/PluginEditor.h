@@ -15,7 +15,7 @@ public:
 private:
     void timerCallback() override;
     void configure();                    // rearma el análisis con los ajustes actuales
-    void resetMeasurement();
+    void resetMeasurement (const juce::String& note = {});
     void updateVerdict();
     void setupCombo (juce::ComboBox&, const juce::Identifier&, const juce::StringArray&, int defaultIndex, const juce::String& tooltip);
     int  setting (const juce::Identifier& id, int def) const;
@@ -35,6 +35,7 @@ private:
     sc::CutoffDetector detector;
     sc::CutoffResult verdict;
     double configuredRate = 0.0;
+    int seenPlayStarts = 0;
     int ticks = 0;
     std::vector<float> bufL, bufR, mono;
 

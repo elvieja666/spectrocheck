@@ -79,12 +79,21 @@ public:
     void setColumnSeconds (double s) { columnSeconds = s; repaint(); }
     void setFloorDb (float f)        { floorDb = f; clearHistory(); }
     void setGuides (bool on)         { showGuides = on; repaint(); }
+
+    // Mostrar u ocultar el panel de promedio; oculto, el espectrograma usa todo el ancho.
+    void setShowProfile (bool on)
+    {
+        if (showProfile == on) return;
+        showProfile = on;
+        resized();
+        repaint();
+    }
     void setDetector (const sc::CutoffDetector* d) { detector = d; }
 
     void setResult (const sc::CutoffResult& r)
     {
         result = r;
-        repaint (profileArea.getUnion (spectroArea).expanded (2));
+        repaint (showProfile ? profileArea.getUnion (spectroArea).expanded (2) : spectroArea.expanded (2));
     }
 
     void clearHistory()
@@ -136,10 +145,15 @@ public:
     {
         auto r = getLocalBounds();
         axisArea = r.removeFromLeft (52);
-        profileArea = r.removeFromRight (juce::jlimit (110, 170, getWidth() / 7));
-        r.removeFromRight (8);
+        if (showProfile)
+        {
+            profileArea = r.removeFromRight (juce::jlimit (110, 170, getWidth() / 7));
+            r.removeFromRight (8);
+            profileArea.removeFromBottom (18);
+        }
+        else
+            profileArea = {};
         timeArea = r.removeFromBottom (18);
-        profileArea.removeFromBottom (18);
         axisArea.removeFromBottom (18);
         spectroArea = r;
         rebuildRows();
@@ -151,7 +165,7 @@ public:
         g.fillAll (Theme::bg);
         paintSpectrogram (g);
         paintAxis (g);
-        paintProfile (g);
+        if (showProfile) paintProfile (g);
         paintHover (g);
     }
 
@@ -433,7 +447,8 @@ private:
         if (hoverY < 0.0f) return;
         const double f = yToFreq (hoverY);
         g.setColour (juce::Colours::white.withAlpha (0.6f));
-        g.drawHorizontalLine (juce::roundToInt (hoverY), (float) spectroArea.getX(), (float) profileArea.getRight());
+        const int right = showProfile ? profileArea.getRight() : spectroArea.getRight();
+        g.drawHorizontalLine (juce::roundToInt (hoverY), (float) spectroArea.getX(), (float) right);
 
         juce::String text = freqLabel (f, true);
         if (detector != nullptr && detector->getSeconds() > 0.0)
@@ -469,7 +484,7 @@ private:
     juce::Rectangle<int> axisArea, spectroArea, profileArea, timeArea;
     juce::Image image;
     int writeX = 0;
-    bool dirty = false, showGuides = true;
+    bool dirty = false, showGuides = true, showProfile = true;
     int numBins = 0;
     double binHz = 1.0, columnSeconds = 0.01;
     float floorDb = -120.0f, hoverY = -1.0f;

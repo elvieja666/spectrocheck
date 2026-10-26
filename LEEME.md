@@ -87,6 +87,7 @@ Debajo del veredicto, SpectroCheck avisa si hay **tonos angostos que se mantiene
 - **Rango:** qué nivel se ve como negro (-100, -120 o -140 dB).
 - **Canal:** L + R, izquierdo, derecho o **Lateral (S)**. Muchos MP3 cortan el estéreo más abajo que el centro: si en L + R no ves nada raro, mirá el Lateral.
 - **Guías:** líneas punteadas en 16, 19, 20 y 22 kHz.
+- **Promedio:** muestra u oculta el panel de promedio y picos de la derecha. Oculto, el espectrograma usa todo el ancho.
 - **Congelar:** detiene la imagen y la medición.
 - Pasando el mouse por encima ves la frecuencia exacta y el nivel promedio en ese punto.
 - A la derecha, el **perfil** muestra el espectro promedio y los picos de toda la medición. El corte de un MP3 se ve como una caída vertical.

@@ -54,6 +54,16 @@ SpectroCheckEditor::SpectroCheckEditor (SpectroCheckProcessor& p)
     };
     addAndMakeVisible (guidesButton);
 
+    profileButton.setClickingTogglesState (true);
+    profileButton.setToggleState ((bool) proc.settings.getProperty (Settings::profile, true), juce::dontSendNotification);
+    profileButton.setTooltip (T ("Muestra u oculta el panel de promedio y picos de la derecha."));
+    profileButton.onClick = [this]
+    {
+        proc.settings.setProperty (Settings::profile, profileButton.getToggleState(), nullptr);
+        view.setShowProfile (profileButton.getToggleState());
+    };
+    addAndMakeVisible (profileButton);
+
     freezeButton.setClickingTogglesState (true);
     freezeButton.setTooltip (T ("Detiene la imagen para mirarla tranquilo. La medición también se pausa."));
     addAndMakeVisible (freezeButton);
@@ -64,6 +74,7 @@ SpectroCheckEditor::SpectroCheckEditor (SpectroCheckProcessor& p)
 
     view.setDetector (&detector);
     view.setGuides (guidesButton.getToggleState());
+    view.setShowProfile (profileButton.getToggleState());
     addAndMakeVisible (view);
 
     bufL.resize (8192);
@@ -71,7 +82,7 @@ SpectroCheckEditor::SpectroCheckEditor (SpectroCheckProcessor& p)
     mono.resize (8192);
 
     setResizable (true, true);
-    setResizeLimits (860, 460, 2400, 1500);
+    setResizeLimits (980, 480, 2400, 1500);
     setSize ((int) proc.settings.getProperty (Settings::width, 1040),
              (int) proc.settings.getProperty (Settings::height, 600));
 
@@ -271,23 +282,24 @@ void SpectroCheckEditor::resized()
 
     // controles alineados a la derecha de la barra de arriba
     auto controls = top.reduced (16, 0);
-    controls.removeFromLeft (200);
+    controls.removeFromLeft (196);
     const int comboY = 24, comboH = 26;
 
     auto place = [&] (juce::Component& c, int w)
     {
         auto slot = controls.removeFromRight (w);
         c.setBounds (slot.getX(), comboY, w, comboH);
-        controls.removeFromRight (10);
+        controls.removeFromRight (8);
     };
-    place (freezeButton, 88);
-    place (guidesButton, 72);
+    place (freezeButton, 84);
+    place (profileButton, 86);
+    place (guidesButton, 66);
     controls.removeFromRight (6);
-    place (channelBox, 112);
-    place (rangeBox, 92);
-    place (speedBox, 92);
-    place (fftBox, 84);
-    place (scaleBox, 92);
+    place (channelBox, 106);
+    place (rangeBox, 84);
+    place (speedBox, 86);
+    place (fftBox, 76);
+    place (scaleBox, 86);
 
     resetButton.setBounds (bottom.getRight() - 16 - 92, bottom.getCentreY() - 14, 92, 28);
 

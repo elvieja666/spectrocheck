@@ -14,7 +14,9 @@ permissions:
 
 jobs:
   mac:
-    runs-on: macos-14
+    # Mac Intel: las de Apple Silicon (macos-14/15) suelen quedar sin lugar en GitHub.
+    # El plugin igual sale universal (Apple Silicon + Intel), lo define CMakeLists.txt.
+    runs-on: macos-15-intel
     steps:
       - name: Bajar el código
         uses: actions/checkout@v4

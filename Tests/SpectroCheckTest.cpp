@@ -103,6 +103,59 @@ static std::vector<float> sparseAir (double sr)
     return body;
 }
 
+static int failures = 0;
+
+// Ruido "tipo música" sin tonos fijos: ruido blanco pasado por un pasabajos FIR muy
+// empinado (ventana Blackman-Harris), así corta como un MP3 pero no tiene líneas.
+static std::vector<float> noiseUpTo (double sr, double maxHz, double seconds, unsigned seed)
+{
+    std::mt19937 rng (seed);
+    std::normal_distribution<double> g (0.0, 0.1);
+    const int n = (int) (sr * seconds), taps = 1023, half = taps / 2;
+
+    std::vector<double> h ((size_t) taps);
+    const double fc = maxHz / sr, pi = juce::MathConstants<double>::pi;
+    for (int i = 0; i < taps; ++i)
+    {
+        const int m = i - half;
+        const double sinc = m == 0 ? 2.0 * fc : std::sin (2.0 * pi * fc * m) / (pi * m);
+        const double t = 2.0 * pi * i / (taps - 1);
+        const double w = 0.35875 - 0.48829 * std::cos (t) + 0.14128 * std::cos (2 * t) - 0.01168 * std::cos (3 * t);
+        h[(size_t) i] = sinc * w;
+    }
+
+    std::vector<double> x ((size_t) (n + taps));
+    for (auto& v : x) v = g (rng);
+    std::vector<float> out ((size_t) n);
+    for (int i = 0; i < n; ++i)
+    {
+        double acc = 0.0;
+        for (int k = 0; k < taps; ++k) acc += h[(size_t) k] * x[(size_t) (i + k)];
+        out[(size_t) i] = (float) acc;
+    }
+    return out;
+}
+
+static void addTone (std::vector<float>& x, double sr, double hz, double amp)
+{
+    for (size_t i = 0; i < x.size(); ++i)
+        x[i] += (float) (amp * std::sin (juce::MathConstants<double>::twoPi * hz * (double) i / sr));
+}
+
+static const sc::ToneLine* lineNear (const sc::CutoffResult& r, double hz, double tol)
+{
+    for (const auto& l : r.lines)
+        if (std::abs (l.hz - hz) <= tol) return &l;
+    return nullptr;
+}
+
+static void checkLines (const char* name, const sc::CutoffResult& r, bool ok)
+{
+    std::printf ("%s %-34s -> %-15s borde %6.0f Hz  | %s\n",
+                 ok ? "OK   " : "FALLA", name, kindName (r.kind), r.edgeHz, r.linesText.toRawUTF8());
+    if (! ok) ++failures;
+}
+
 static sc::CutoffResult measure (const std::vector<float>& x, double sr, int fftOrder)
 {
     sc::SpectrumAnalyzer an;
@@ -115,8 +168,6 @@ static sc::CutoffResult measure (const std::vector<float>& x, double sr, int fft
     });
     return det.analyze();
 }
-
-static int failures = 0;
 
 static void check (const char* name, const sc::CutoffResult& r, bool ok)
 {
@@ -158,6 +209,32 @@ int main()
         std::vector<float> silence (44100 * 3, 0.0f);
         auto r7 = measure (silence, 44100, order);
         check ("Silencio", r7, r7.kind == Kind::waiting);
+    }
+
+    // --- líneas fijas (solo con FFT 8192, para no tardar) ---
+    std::printf ("\n--- Líneas fijas ---\n");
+    {
+        auto plain = noiseUpTo (44100, 16000, 8, 40);
+        auto a = measure (plain, 44100, 13);
+        checkLines ("Corte 16 kHz sin líneas", a, a.kind == Kind::codec && a.linesReady && a.lines.empty());
+
+        auto disguised = noiseUpTo (44100, 16000, 8, 41);
+        addTone (disguised, 44100, 19000, 0.0005);      // relleno a -66 dBFS en 19 kHz
+        auto b = measure (disguised, 44100, 13);
+        const auto* l19 = lineNear (b, 19000, 25);
+        checkLines ("MP3 16 kHz con tono fijo en 19k", b,
+                    b.kind == Kind::codec && b.edgeHz > 15700 && b.edgeHz < 16400 && l19 != nullptr && l19->aboveCutoff);
+
+        auto hum = darkNoise (44100, 2000, 8);
+        addTone (hum, 44100, 50, 0.2);                  // zumbido de línea eléctrica
+        auto c = measure (hum, 44100, 13);
+        const auto* l50 = lineNear (c, 50, 8);
+        checkLines ("Zumbido de 50 Hz", c, l50 != nullptr && ! l50->aboveCutoff);
+
+        auto shortOne = noiseUpTo (44100, 16000, 3, 42);
+        addTone (shortOne, 44100, 19000, 0.0005);
+        auto d = measure (shortOne, 44100, 13);
+        checkLines ("Menos de 5 s: todavía no informa", d, ! d.linesReady && d.lines.empty());
     }
 
     std::printf ("\n%s\n", failures == 0 ? "Todas las pruebas OK" : "HAY PRUEBAS QUE FALLARON");

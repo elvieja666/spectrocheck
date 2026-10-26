@@ -3,6 +3,7 @@
 #include <vector>
 #include <cmath>
 #include <memory>
+#include <algorithm>
 
 // ---------------------------------------------------------------------------
 //  Motor de análisis, sin nada de interfaz (así se puede probar solo).
@@ -116,6 +117,17 @@ namespace sc
     };
 
     //==========================================================================
+    // Un tono angosto que está presente casi todo el tiempo (zumbido, silbido, marca de agua,
+    // o un "relleno" puesto para disimular un MP3).
+    struct ToneLine
+    {
+        float hz = 0.0f;
+        float share = 0.0f;         // fracción del tiempo con señal en que se lo ve (0..1)
+        float prominenceDb = 0.0f;  // cuánto sobresale sobre las frecuencias vecinas
+        float levelDb = minDb;      // nivel promedio de la línea
+        bool aboveCutoff = false;   // está por encima de donde termina la música
+    };
+
     struct CutoffResult
     {
         enum class Kind { waiting, fullBand, codec, resampled, gradual };
@@ -124,6 +136,10 @@ namespace sc
         float dropDb = 0.0f;      // cuánto cae justo arriba del corte
         float seconds = 0.0f;     // segundos con señal medidos
         juce::String title, detail;
+
+        bool linesReady = false;        // ya pasó el tiempo mínimo para buscar líneas
+        std::vector<ToneLine> lines;    // las más marcadas primero
+        juce::String linesText;         // resumen para mostrar abajo
     };
 
     class CutoffDetector
@@ -140,6 +156,14 @@ namespace sc
         static constexpr int numBuckets = 64;             // histograma por banda, de a 2.5 dB
         static constexpr float bucketDb = 2.5f;
 
+        // Líneas fijas: un bin cuenta como "línea" en un cuadro si es un pico que sobresale
+        // 8 dB o más sobre sus vecinos; es una línea fija si eso pasa en el 80% del tiempo.
+        static constexpr float  lineFrameProminenceDb = 8.0f;
+        static constexpr double lineMinShare = 0.80;
+        static constexpr float  lineMinProminenceDb = 6.0f;   // en el promedio de toda la medición
+        static constexpr double lineMinSeconds = 5.0;
+        static constexpr int    maxLines = 4;
+
         void reset (int bins, double newBinHz, double newSampleRate)
         {
             numBins = bins;
@@ -152,6 +176,8 @@ namespace sc
             meanSmooth.assign ((size_t) bins, minDb);
             level.assign ((size_t) bins, minDb);
             smooth.assign ((size_t) bins, minDb);
+            lineCount.assign ((size_t) bins, 0u);
+            framePow.assign ((size_t) bins + 1, 0.0);
             frames = 0;
             seconds = 0.0;
             silentSeconds = 0.0;
@@ -179,6 +205,7 @@ namespace sc
                 const int bucket = juce::jlimit (0, numBuckets - 1, (int) ((db[b] - minDb) / bucketDb));
                 ++hist[(size_t) b * numBuckets + (size_t) bucket];
             }
+            countLinePeaks (db, n);
             ++frames;
             seconds += frameSeconds;
         }
@@ -220,6 +247,17 @@ namespace sc
                 mean[(size_t) b]  = powerToDb (sum[(size_t) b] / frames);
                 level[(size_t) b] = activeLevel (b);
             }
+
+            // Primero las líneas fijas, y se tapan para que un tono suelto (por ejemplo un
+            // "relleno" en 19 kHz sobre un MP3 que corta en 16) no engañe al medir el corte.
+            r.linesReady = seconds >= lineMinSeconds;
+            if (r.linesReady)
+            {
+                r.lines = findLines();
+                for (const auto& line : r.lines)
+                    maskLine (level, line.hz);
+            }
+
             const int k = juce::jmax (1, (int) std::round (100.0 / binHz));
             smoothInto (mean, meanSmooth, k);
             smoothInto (level, smooth, k);
@@ -288,6 +326,8 @@ namespace sc
                 r.title  = "Se apaga de a poco cerca de " + kHz (edgeHz);
                 r.detail = txt ("Caída suave: parece la grabación o la mezcla, no un códec. Probá en una parte con más brillo.");
             }
+
+            describeLines (r, reachesTop ? nyq : edgeHz);
             return r;
         }
 
@@ -303,6 +343,123 @@ namespace sc
         }
 
     private:
+        // Ancho (en bins) del lóbulo principal de un tono con ventana Blackman-Harris.
+        static constexpr int lobeBins = 4;
+
+        int neighbourBins() const { return juce::jmax (6, (int) std::round (150.0 / binHz)); }
+
+        // Nivel promedio (dB) de los vecinos de un bin, salteando el lóbulo del propio tono.
+        float neighbourDb (const std::vector<double>& cumPow, int b) const
+        {
+            const int w = neighbourBins();
+            const int l0 = juce::jmax (0, b - lobeBins - w), l1 = juce::jmax (0, b - lobeBins);            // [l0, l1)
+            const int r0 = juce::jmin (numBins, b + lobeBins + 1), r1 = juce::jmin (numBins, b + lobeBins + 1 + w);
+            const int count = (l1 - l0) + (r1 - r0);
+            if (count <= 0) return minDb;
+            const double p = (cumPow[(size_t) l1] - cumPow[(size_t) l0]) + (cumPow[(size_t) r1] - cumPow[(size_t) r0]);
+            return powerToDb (p / count);
+        }
+
+        // En cada cuadro: anotar qué bins son un pico angosto que sobresale de sus vecinos.
+        void countLinePeaks (const float* db, int n)
+        {
+            framePow[0] = 0.0;
+            for (int b = 0; b < n; ++b)
+                framePow[(size_t) b + 1] = framePow[(size_t) b] + dbToPower (db[b]);
+
+            const int first = juce::jmax (1, binAt (20.0));
+            for (int b = first; b < n - 1; ++b)
+            {
+                const float v = db[b];
+                if (v < -135.0f || v < db[b - 1] || v < db[b + 1]) continue;
+                if (v - neighbourDb (framePow, b) >= lineFrameProminenceDb)
+                    ++lineCount[(size_t) b];
+            }
+        }
+
+        std::vector<ToneLine> findLines() const
+        {
+            std::vector<double> cum ((size_t) numBins + 1, 0.0);
+            for (int b = 0; b < numBins; ++b)
+                cum[(size_t) b + 1] = cum[(size_t) b] + dbToPower (mean[(size_t) b]);
+
+            std::vector<ToneLine> found;
+            const auto minCount = (juce::uint32) std::ceil ((double) frames * lineMinShare);
+            const int cluster = lobeBins + 2;   // bins vecinos que son la misma línea
+
+            for (int b = 1; b < numBins - 1; ++b)
+            {
+                // Un tono que cae entre dos bins puede repartirse: sumar los vecinos inmediatos.
+                const auto c = juce::jmax (lineCount[(size_t) b],
+                                           juce::jmin<juce::uint32> ((juce::uint32) frames,
+                                               lineCount[(size_t) b] + juce::jmax (lineCount[(size_t) b - 1], lineCount[(size_t) b + 1])));
+                if (c < minCount) continue;
+
+                const float prominence = mean[(size_t) b] - neighbourDb (cum, b);
+                if (prominence < lineMinProminenceDb) continue;
+
+                ToneLine line;
+                line.hz = (float) (b * binHz);
+                line.share = juce::jmin (1.0f, (float) c / (float) frames);
+                line.prominenceDb = prominence;
+                line.levelDb = mean[(size_t) b];
+
+                // Si ya hay una línea a pocos bins, quedarse con la más marcada.
+                if (! found.empty() && (line.hz - found.back().hz) / binHz <= cluster)
+                {
+                    if (line.prominenceDb > found.back().prominenceDb) found.back() = line;
+                    continue;
+                }
+                found.push_back (line);
+            }
+
+            std::sort (found.begin(), found.end(), [] (const ToneLine& a, const ToneLine& b) { return a.prominenceDb > b.prominenceDb; });
+            if ((int) found.size() > maxLines) found.resize ((size_t) maxLines);
+            return found;
+        }
+
+        // Reemplaza el lóbulo de una línea por el nivel de sus costados.
+        void maskLine (std::vector<float>& v, double hz) const
+        {
+            const int c = binAt (hz);
+            const int a = juce::jmax (0, c - lobeBins - 1), z = juce::jmin (numBins - 1, c + lobeBins + 1);
+            const float fill = juce::jmin (v[(size_t) a], v[(size_t) z]);
+            for (int b = a + 1; b < z; ++b) v[(size_t) b] = juce::jmin (v[(size_t) b], fill);
+        }
+
+        void describeLines (CutoffResult& r, double contentTopHz) const
+        {
+            if (! r.linesReady)
+            {
+                r.linesText = txt ("Líneas fijas: midiendo (hacen falta ")
+                              + juce::String (juce::roundToInt (lineMinSeconds)) + " s con sonido)";
+                return;
+            }
+            if (r.lines.empty())
+            {
+                r.linesText = txt ("Sin líneas fijas");
+                return;
+            }
+
+            juce::StringArray parts;
+            bool anyAbove = false;
+            for (auto& line : r.lines)
+            {
+                // Solo tiene sentido hablar de "por encima del corte" si hubo un corte de códec.
+                const bool hasCodecCut = r.kind == CutoffResult::Kind::codec || r.kind == CutoffResult::Kind::resampled;
+                line.aboveCutoff = hasCodecCut && line.hz > contentTopHz + 150.0;
+                anyAbove = anyAbove || line.aboveCutoff;
+                const juce::String f = line.hz < 1000.0f ? juce::String (juce::roundToInt (line.hz)) + " Hz"
+                                                         : juce::String (line.hz / 1000.0f, 2) + " kHz";
+                parts.add (f + " (" + juce::String (juce::roundToInt (line.share * 100.0f)) + "%, +"
+                           + juce::String (juce::roundToInt (line.prominenceDb)) + " dB)");
+            }
+            r.linesText = (r.lines.size() == 1 ? txt ("Línea fija: ") : txt ("Líneas fijas: "))
+                          + parts.joinIntoString (txt ("  ·  "));
+            if (anyAbove)
+                r.linesText += txt ("  —  por encima del corte: posible MP3 disfrazado");
+        }
+
         // Nivel que esta banda supera durante al menos el 20% del tiempo medido.
         float activeLevel (int b) const
         {
@@ -347,7 +504,8 @@ namespace sc
         int numBins = 0;
         double binHz = 1.0, sampleRate = 44100.0;
         std::vector<double> sum;
-        std::vector<juce::uint32> hist;
+        std::vector<juce::uint32> hist, lineCount;
+        std::vector<double> framePow;
         std::vector<float> peak, mean, meanSmooth, level, smooth;
         long frames = 0;
         double seconds = 0.0, silentSeconds = 0.0;

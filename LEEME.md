@@ -70,6 +70,15 @@ Cuando dice **✅ Listo**, abrí Logic. Lo encontrás en **Audio Units > 0600mus
 
 Cada codificador corta en un lugar un poco distinto, así que tomalo como guía. Un caso especial: si el proyecto está a 88.2 o 96 kHz y el audio corta en ~22 kHz, es un archivo de "alta resolución" hecho desde uno de 44.1/48 kHz.
 
+### Líneas fijas
+
+Debajo del veredicto, SpectroCheck avisa si hay **tonos angostos que se mantienen durante todo el audio**. Para contar, el tono tiene que verse en el 80% del tiempo o más y sobresalir sobre las frecuencias vecinas. Empieza a informar después de 5 segundos con sonido.
+
+- Se marcan en turquesa sobre el espectrograma, con la frecuencia a la izquierda, y con un punto en el perfil.
+- Si la línea está **por encima del corte** de un MP3, se marca en naranja con el aviso *"posible MP3 disfrazado"*. Es la típica señal de alguien que le agregó algo a un archivo con pérdida para que parezca de banda completa.
+- También aparecen cosas como el zumbido eléctrico (50/60 Hz), el silbido de 15.7 kHz de equipos viejos o tonos de marca de agua.
+- Las líneas fijas no se tienen en cuenta al medir el corte, así que un tono suelto en 19 kHz no hace que un MP3 de 16 kHz parezca de banda completa.
+
 ### Los controles
 
 - **Escala:** *Lineal* (recomendada para ver cortes: reparte los agudos con mucho espacio), *Log* (como un analizador común) o *Agudos* (solo de 10 kHz para arriba, para mirar el corte de cerca).
